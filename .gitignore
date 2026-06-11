@@ -1,0 +1,12 @@
+# 编译产物
+usage-monitor
+__pycache__/
+
+# 私人内容: Apple Watch 对接 / 交接文档 (不属于公开面板)
+claude-watch/
+WATCH-DESIGN.md
+start-bridge.sh
+HANDOFF.md
+
+# 系统杂项
+.DS_Store
