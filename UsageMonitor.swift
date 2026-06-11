@@ -37,8 +37,22 @@ func pctColor(_ pct: Double) -> NSColor {
 }
 
 // 容器: 强制箭头光标 (NSTextField 会显 I-beam) + 圆角裁切;
-// 毛玻璃作为子层独立调透明度, 不影响其上的文字
+// 毛玻璃作为子层独立调透明度, 不影响其上的文字;
+// 跟踪鼠标进出 (悬停时才显示标题栏按钮)
 final class PanelBackground: NSView {
+    var onHover: ((Bool) -> Void)?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        // .inVisibleRect: 面板伸缩时跟踪区自动跟随 bounds
+        addTrackingArea(NSTrackingArea(rect: .zero,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self, userInfo: nil))
+    }
+    override func mouseEntered(with event: NSEvent) { onHover?(true) }
+    override func mouseExited(with event: NSEvent) { onHover?(false) }
+
     override func resetCursorRects() {
         discardCursorRects()
         addCursorRect(bounds, cursor: .arrow)
@@ -230,6 +244,9 @@ final class App: NSObject, NSApplicationDelegate {
     let ringStack = NSStackView()   // 圆环模式容器 (3 列网格)
     let titleLabel = NSTextField(labelWithString: "AI Usage")
     let updatedLabel = NSTextField(labelWithString: "")
+    var header: NSStackView!
+    var hovered = false
+    var headerGrewDown = false   // 本次标题栏展开是否被迫向下 (收起时按原方向回退)
     var modeBtn: NSButton!
     var rows: [String: RowView] = [:]
     var ringCells: [String: RingCell] = [:]
@@ -283,11 +300,16 @@ final class App: NSObject, NSApplicationDelegate {
         let refreshBtn = NSButton(title: "↻", target: self, action: #selector(doRefresh))
         refreshBtn.isBordered = false
         refreshBtn.font = .systemFont(ofSize: 11)
-        let quit = NSButton(title: "✕", target: NSApp, action: #selector(NSApplication.terminate(_:)))
+        let quit = NSButton(title: "✕", target: self, action: #selector(quitApp))
         quit.isBordered = false
         quit.font = .systemFont(ofSize: 10)
-        let header = NSStackView(views: [titleLabel, NSView(), updatedLabel, modeBtn, refreshBtn, quit])
+        // 标题栏平时整体隐藏 (毛玻璃只包住内容), 悬停时窗口向上长出一截放标题:
+        // 内容在屏幕上原地不动, 毛玻璃随窗口一起延伸, 标题文字淡入
+        header = NSStackView(views: [titleLabel, NSView(), updatedLabel, modeBtn, refreshBtn, quit])
         header.orientation = .horizontal
+        header.isHidden = true
+        header.alphaValue = 0
+        container.onHover = { [weak self] inside in self?.setHovered(inside) }
 
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -324,10 +346,50 @@ final class App: NSObject, NSApplicationDelegate {
         panel.setFrameAutosaveName("UsageMonitor")
         panel.orderFrontRegardless()
         refresh()
-        Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { _ in self.refresh() }
+        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in self.refresh() }
     }
 
     @objc func doRefresh() { refresh() }
+
+    // ✕ 总是在悬停展开态被点到: 先收起再退出, 否则 autosave 存下展开 frame,
+    // 下次启动按顶边收缩会让面板每次重启上移一截
+    @objc func quitApp() {
+        if !header.isHidden {
+            header.isHidden = true
+            layoutPanel(anchorTop: false)   // 按 headerGrewDown 原方向对称回退
+        }
+        NSApp.terminate(nil)
+    }
+
+    // 悬停显隐标题栏: 窗口向上长出一截放标题 (内容原地不动, 不遮挡内容);
+    // 窗口瞬时变尺寸 (无缩放动画 → 无重影), 标题文字淡入/淡出
+    func setHovered(_ inside: Bool) {
+        guard inside != hovered else { return }
+        // 首批数据未到时面板还是恢复的旧尺寸 (空内容), 此时展开会按错误高度计算
+        guard last != nil else { return }
+        hovered = inside
+        if inside {
+            // 淡出中途重入: header 还可见、窗口仍展开着, 不能重复 layout
+            // (否则等高情形会走收起分支把 headerGrewDown 清掉)
+            if header.isHidden {
+                header.isHidden = false
+                layoutPanel(anchorTop: false)
+            }
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.15
+                self.header.animator().alphaValue = 1
+            }
+        } else {
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.15
+                self.header.animator().alphaValue = 0
+            }, completionHandler: { [weak self] in
+                guard let self, !self.hovered else { return }
+                self.header.isHidden = true
+                self.layoutPanel(anchorTop: false)
+            })
+        }
+    }
 
     @objc func toggleMode() {
         mode = mode == "ring" ? "list" : "ring"
@@ -361,19 +423,48 @@ final class App: NSObject, NSApplicationDelegate {
         // NSStackView 自动把 hidden 的 arranged subview 移出布局
         listStack.isHidden = ring
         ringStack.isHidden = !ring
+        layoutPanel(anchorTop: true)
+    }
+
+    // 按当前模式与标题栏显隐重算面板尺寸.
+    // anchorTop=true: 顶边固定向下伸缩 (切换视图/数据更新, 历史行为);
+    // anchorTop=false: 底边固定向上伸缩 (悬停标题栏, 内容在屏幕上原地不动),
+    //                  上方空间不足时退回顶边固定向下展开, 收起按原方向回退
+    func layoutPanel(anchorTop: Bool) {
+        let ring = mode == "ring"
         // 圆环模式 = 单行迷你条: 内容更窄, 边距收紧
         headerW.constant = ring ? ringW : contentW
         insets[0].constant = ring ? 8 : 12
         insets[1].constant = ring ? 12 : 16
         insets[2].constant = ring ? -12 : -16
         insets[3].constant = ring ? -8 : -12
-        panel.layoutIfNeeded()
+        // 注意: 不能先 layoutIfNeeded —— 约束变化会让 AutoLayout 抢先隐式改窗口
+        // 尺寸 (锚点不可控), 再读 frame 就错了, 表现为悬停一次窗口下移一截;
+        // 必须 读旧 frame → fittingSize 纯测量 → 显式 setFrame → 最后布局
         var f = panel.frame
         let top = f.maxY
-        f.size.height = stack.fittingSize.height + (ring ? 16 : 24)
+        let newH = stack.fittingSize.height + (ring ? 16 : 24)
+        var keepTop = anchorTop
+        if !anchorTop {
+            if newH > f.height {          // 展开: 上方放不下则向下
+                let screenTop = (panel.screen ?? NSScreen.main)?.visibleFrame.maxY ?? f.maxY
+                headerGrewDown = newH - f.height > screenTop - f.maxY
+                keepTop = headerGrewDown
+            } else if newH < f.height {   // 收起: 与展开方向对称
+                keepTop = headerGrewDown
+                headerGrewDown = false
+            }                             // 等高 = 无操作, 保留方向标记
+        }
+        f.size.height = newH
         f.size.width = ring ? ringW + 24 : contentW + 32
-        f.origin.y = top - f.size.height
+        if keepTop { f.origin.y = top - newH }
+        if let vis = (panel.screen ?? NSScreen.main)?.visibleFrame {
+            // 上下都放不下时兜底: 底边别压进 Dock; 切换视图变宽时右缘不出屏
+            if !anchorTop, f.origin.y < vis.minY { f.origin.y = vis.minY }
+            if f.maxX > vis.maxX { f.origin.x = vis.maxX - f.width }
+        }
         panel.setFrame(f, display: true)
+        panel.layoutIfNeeded()
     }
 
     func renderList(_ payload: Payload) {

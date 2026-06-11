@@ -12,7 +12,7 @@ Figuring out *"which AI should I use right now"* shouldn't be a query task — i
 
 - **Availability, not usage.** Raw percentages don't carry a decision. The panel shows what's left and how long until it comes back (adaptive single-unit countdowns: `3d`, `4h`, `45m`), and pace-based colors answer the only question that matters: *at this burn rate, will the window survive until reset?* Green = go ahead, red = ease off.
 - **Visual hierarchy mirrors information hierarchy.** The 5h window is what you act on — big, bold, bar / outer ring. Countdowns are smaller and dimmer. Weekly windows, MCP quotas and plan tiers are fine print / thinner inner rings. No icons, no decoration.
-- **Ambient, not an app.** Always-on-top vibrancy panel, no Dock icon, never steals focus, auto-refreshes, remembers its position and view mode. Like the menu-bar clock: always there, always current, never managed.
+- **Ambient, not an app.** Always-on-top vibrancy panel, no Dock icon, never steals focus, auto-refreshes, remembers its position and view mode. All chrome (title, clock, buttons) stays hidden until you hover — at rest it's nothing but the data. Like the menu-bar clock: always there, always current, never managed.
 - **Zero maintenance.** Credentials are reused from the CLIs you already log into; expired OAuth tokens refresh themselves. Install it, then forget it exists — except for the colors.
 
 **Six subscriptions, one glance, zero maintenance.**
@@ -23,7 +23,8 @@ Figuring out *"which AI should I use right now"* shouldn't be a query task — i
 - **Self-healing OAuth**: expired Codex / Gemini access tokens are silently refreshed via their refresh tokens and written back — no more re-running CLIs just to query usage.
 - **Pace coloring**: window color reflects burn rate vs. reset time (green = sustainable … red = will exhaust before reset), same algorithm as the Claude Code statusline.
 - **Two complementary views**, deliberately different: the **list** carries the numbers (exact percentages, reset countdowns, plan & quota fine print); the **ring strip** is a compact single-row, pure-graphic glance at your top-4 providers — arcs and pace colors only (outer = 5h window, inner = 7d/weekly, smallest = monthly MCP quota), hover for details. Toggle with `◔`/`☰`; mode and window position persist.
-- Native NSPanel + vibrancy, no Dock icon, auto-refresh every 5 min, `↻` for manual refresh, hover for details.
+- **Hover-only chrome**: at rest the panel is just rings/rows; hovering grows a title bar out of the top edge (content never moves) with clock, view toggle `◔`/`☰`, refresh `↻` and quit `✕` — it retracts when the mouse leaves.
+- Native NSPanel + vibrancy, no Dock icon, auto-refresh every minute, `↻` for manual refresh, hover for details.
 
 ## Install
 
