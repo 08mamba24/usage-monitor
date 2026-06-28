@@ -28,11 +28,23 @@ cat > "$PLIST" <<EOF
     <key>Label</key><string>$LABEL</string>
     <key>ProgramArguments</key><array><string>$PWD/usage-monitor</string></array>
     <key>RunAtLoad</key><true/>
-    <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+    <key>KeepAlive</key><true/>
     <key>LimitLoadToSessionType</key><string>Aqua</string>
 </dict>
 </plist>
 EOF
 launchctl bootout "$GUI/$LABEL" 2>/dev/null || true
-launchctl bootstrap "$GUI" "$PLIST"
+for _ in {1..20}; do
+    launchctl print "$GUI/$LABEL" >/dev/null 2>&1 || break
+    sleep 0.1
+done
+for i in {1..5}; do
+    if launchctl bootstrap "$GUI" "$PLIST"; then
+        break
+    fi
+    if [[ "$i" == 5 ]]; then
+        exit 1
+    fi
+    sleep 0.3
+done
 echo "✓ running — login autostart enabled. Uninstall: ./install.sh --uninstall"

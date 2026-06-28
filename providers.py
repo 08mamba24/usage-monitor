@@ -98,10 +98,10 @@ def http_json(url, headers=None, data=None, timeout=TIMEOUT):
 PROVIDERS = []
 
 
-def row(pid, name, kind="balance", ok=False, pct=None, value="—", detail="", tone=None, wins=None):
+def row(pid, name, kind="balance", ok=False, pct=None, value="—", detail="", tone=None, wins=None, cval=None):
     return {"id": pid, "name": name, "kind": kind, "ok": ok,
             "pct": pct, "value": value, "detail": detail, "tone": tone,
-            "wins": wins or []}
+            "wins": wins or [], "cval": cval}
 
 
 def provider(pid, name):
@@ -149,17 +149,19 @@ def pace(pct, left_ms, window_ms):
             else "orange" if ratio >= 0.5 else "red")
 
 
-def pct_row(pid, name, used5, reset_ms=None, *details):
+def pct_row(pid, name, used5, reset_ms=None, *details,
+            main_label="5h", main_window_ms=5 * 3600 * 1000, cval=None):
     """百分比类订阅的统一行: 主值为 5h 窗口(按消耗速度配色), 次行 ' · ' 连接
-    details 中的 win() dict 进入 wins 数组(圆环视图用), 字符串作为备注"""
-    wins = [win("5h", used5, fmt_ms(reset_ms) if reset_ms else None,
-                left_ms=reset_ms, window_ms=5 * 3600 * 1000)]
+    details 中的 win() dict 进入 wins 数组(圆环视图用), 字符串作为备注
+    cval: 紧凑模式补充串 (圆环悬停框追加一行, 如 Claude 的美元超额)"""
+    wins = [win(main_label, used5, fmt_ms(reset_ms) if reset_ms else None,
+                left_ms=reset_ms, window_ms=main_window_ms)]
     wins += [d for d in details if isinstance(d, dict)]
     return row(pid, name, "percent", True, pct=round(used5),
                value=win_str(wins[0]),
                detail=" · ".join(win_str(d) if isinstance(d, dict) else str(d)
                                  for d in details if d),
-               tone=wins[0]["tone"], wins=wins)
+               tone=wins[0]["tone"], wins=wins, cval=cval)
 
 
 def fmt_ms(ms):
@@ -169,6 +171,20 @@ def fmt_ms(ms):
         return f"{m}m"
     h = round(m / 60)
     return f"{h}h" if h < 24 else f"{round(h / 24)}d"
+
+
+def window_label(seconds):
+    """窗口秒数 → 短标签；未知时仍按 5h 兜底"""
+    if not seconds:
+        return "5h"
+    if seconds % (24 * 3600) == 0:
+        d = seconds // (24 * 3600)
+        if 28 <= d <= 31:
+            return "mo"
+        return "7d" if d == 7 else f"{d}d"
+    if seconds % 3600 == 0:
+        return f"{seconds // 3600}h"
+    return fmt_ms(seconds * 1000)
 
 
 def day_spend(pid, balance):
@@ -203,10 +219,13 @@ def p_deepseek():
     b = (d.get("balance_infos") or [{}])[0]
     cur = "¥" if b.get("currency") == "CNY" else b.get("currency", "")
     total = float(b.get("total_balance") or 0)
+    spend = day_spend("deepseek", total)
+    # 紧凑模式(圆环/条状)pill 显示今日消耗而非总余额; 余额仍在 value/悬停 tooltip
     return row("deepseek", "DeepSeek", "balance", True,
                value=f"{cur}{total:.2f}",
-               detail=f"today -{cur}{day_spend('deepseek', total):.2f}"
-                      + ("" if d.get("is_available", True) else " · unavailable"))
+               detail=f"today -{cur}{spend:.2f}"
+                      + ("" if d.get("is_available", True) else " · unavailable"),
+               cval=f"{cur}{spend:.2f}")
 
 
 @provider("claude", "Claude")
@@ -226,11 +245,20 @@ def p_claude():
     if mult.endswith("x") and mult[:-1].isdigit():
         sub = f"{sub} {mult}"
     sleft = ms_left_iso(sd["resets_at"]) if sd.get("resets_at") else None
+    # extra_usage = 订阅外按量付费额度 (随消耗累加, 比限流%更"活"); 仅开启时显示
+    eu = d.get("extra_usage") or {}
+    extra = None
+    if eu.get("is_enabled") and eu.get("monthly_limit"):
+        # 金额按 decimal_places 缩放: 接口给的是最小单位(美分), 除 10^dp 得美元
+        scale = 10 ** eu.get("decimal_places", 0)
+        used, lim = float(eu.get("used_credits") or 0) / scale, float(eu["monthly_limit"]) / scale
+        cur = "$" if eu.get("currency") == "USD" else (eu.get("currency") or "")
+        extra = f"{cur}{used:.2f}/{cur}{lim:.0f}"
     return pct_row("claude", "Claude", fh["utilization"],
                    ms_left_iso(fh["resets_at"]) if fh.get("resets_at") else None,
                    win("7d", sd.get("utilization"), fmt_ms(sleft) if sleft else None,
                        left_ms=sleft, window_ms=WEEK),
-                   sub)
+                   sub, extra, cval=extra)
 
 
 @provider("glm", "GLM")
@@ -308,12 +336,15 @@ def p_codex():
     pw, sw = rl.get("primary_window") or {}, rl.get("secondary_window") or {}
     if pw.get("used_percent") is None:
         return row("codex", "Codex", detail=d.get("plan_type", "no data"))
+    pwin_ms = (pw.get("limit_window_seconds") or 5 * 3600) * 1000
     sleft = ms_left(sw["reset_at"] * 1000) if sw.get("reset_at") else None
     return pct_row("codex", "Codex", pw["used_percent"],
                    ms_left(pw["reset_at"] * 1000) if pw.get("reset_at") else None,
                    win("7d", sw.get("used_percent"), fmt_ms(sleft) if sleft else None,
                        left_ms=sleft, window_ms=WEEK),
-                   d.get("plan_type"))
+                   d.get("plan_type"),
+                   main_label=window_label(pw.get("limit_window_seconds")),
+                   main_window_ms=pwin_ms)
 
 
 def _gemini_client():
