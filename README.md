@@ -22,8 +22,8 @@ Figuring out *"which AI should I use right now"* shouldn't be a query task — i
 - **Zero config**: reuses credentials your CLIs already saved (Claude Code keychain, `~/.codex/auth.json`, `~/.gemini/oauth_creds.json`, opencode/hermes auth files). Providers without credentials are hidden automatically.
 - **Self-healing OAuth**: expired Codex / Gemini access tokens are silently refreshed via their refresh tokens and written back — no more re-running CLIs just to query usage.
 - **Pace coloring**: window color reflects burn rate vs. reset time (green = sustainable … red = will exhaust before reset), same algorithm as the Claude Code statusline.
-- **Two complementary views**, deliberately different: the **list** carries the numbers (exact percentages, reset countdowns, plan & quota fine print); the **ring strip** is a compact single-row, pure-graphic glance at your top-4 providers — arcs and pace colors only (outer = 5h window, inner = 7d/weekly, smallest = monthly MCP quota), hover for details. Toggle with `◔`/`☰`; mode and window position persist.
-- **Hover-only chrome**: at rest the panel is just rings/rows; hovering grows a title bar out of the top edge (content never moves) with clock, view toggle `◔`/`☰`, refresh `↻` and quit `✕` — it retracts when the mouse leaves.
+- **Three complementary views**, deliberately different: the **list** carries the numbers (exact percentages, reset countdowns, plan & quota fine print); the **ring strip** is a compact single-row, pure-graphic glance at your chosen 4 providers — arcs and pace colors only (outer = 5h window, inner = 7d/weekly, smallest = monthly MCP quota), hover for details; the **bar strip** mirrors the ring strip with stacked horizontal meters instead of arcs. Cycle them with the view-toggle button (`◔` list → `▤` ring → `☰` bar), and pick which providers fill the compact strips via the `⚙` menu (up to 4, Reset Default to restore); mode and window position persist.
+- **Hover-only chrome**: at rest the panel is just rings/rows; hovering grows a title bar out of the top edge (content never moves) with the clock, the view-toggle (`◔` list → `▤` ring → `☰` bar), a `⚙` provider picker, refresh `↻`, and `✕` to hide the panel — it retracts when the mouse leaves. The app never quits on its own: `✕` only hides, and a small **menu-bar gauge** toggles the panel back; the launchd agent self-heals across crashes and logout.
 - Native NSPanel + vibrancy, no Dock icon, auto-refresh every minute, `↻` for manual refresh, hover for details.
 
 ## Install
@@ -40,7 +40,7 @@ Requirements: macOS 13+, Xcode Command Line Tools (`xcode-select --install`). No
 | Provider | Shows | Credentials from |
 |---|---|---|
 | Claude (Max/Pro) | 5h + 7d windows, plan & tier | macOS Keychain (Claude Code login) |
-| Codex (ChatGPT) | 5h + 7d windows, plan | `~/.codex/auth.json`, auto-refreshed |
+| Codex (ChatGPT) | 5h/monthly + 7d windows, plan | `~/.codex/auth.json`, auto-refreshed |
 | Gemini (Code Assist) | quota used | `~/.gemini/oauth_creds.json`, auto-refreshed |
 | GLM (z.ai coding plan) | 5h window, monthly MCP quota | `GLM_API_KEY` / opencode / hermes |
 | MiniMax coding plan | 5h + weekly windows | `MINIMAX_API_KEY` / opencode / hermes |
