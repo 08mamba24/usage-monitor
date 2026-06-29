@@ -596,12 +596,16 @@ final class App: NSObject, NSApplicationDelegate {
         ]
         NSLayoutConstraint.activate(insets)
 
-        // 初始位置：优先恢复上次位置 (拖动/缩放自动保存), 无记录则右上角
+        // 初始位置：优先恢复上次保存的折叠态位置, 无记录则右上角
         if !panel.setFrameUsingName("UsageMonitor"), let screen = NSScreen.main {
             let f = screen.visibleFrame
             panel.setFrameTopLeftPoint(NSPoint(x: f.maxX - 280, y: f.maxY - 12))
         }
-        panel.setFrameAutosaveName("UsageMonitor")
+        // 不用 setFrameAutosaveName: 它会把悬停展开的高 frame 也自动存盘,
+        // kickstart/被杀时若正展开就存下展开态 → 重启后折叠面板逐次上移。
+        // 改为只在折叠态手动存盘 (panelMoved), 展开态绝不持久化。
+        NotificationCenter.default.addObserver(self, selector: #selector(panelMoved),
+                                               name: NSWindow.didMoveNotification, object: panel)
         panel.orderFrontRegardless()
 
         // 菜单栏图标: ✕ 隐藏面板后, 点这个图标把面板调回来 (显隐切换)
@@ -616,14 +620,14 @@ final class App: NSObject, NSApplicationDelegate {
         }
 
         refresh()
-        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in self.refresh() }
+        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refresh() }
     }
 
     @objc func doRefresh() { refresh() }
 
     // ✕ = 隐藏面板 (不再退出进程; 进程由 launchd KeepAlive=true 常驻自愈).
-    // ✕ 总是在悬停展开态被点到: 先收起标题栏再隐藏, 否则 autosave 存下展开 frame,
-    // 下次显示按顶边收缩会让面板每次上移一截.
+    // 先收起标题栏再隐藏: 收起的重排会触发 panelMoved 存下折叠态位置,
+    // 保证下次调回来是折叠态、位置不漂移.
     @objc func hidePanel() {
         if !header.isHidden {
             header.isHidden = true
@@ -640,6 +644,12 @@ final class App: NSObject, NSApplicationDelegate {
         } else {
             panel.orderFrontRegardless()
         }
+    }
+
+    // 面板移动时存盘, 但只在折叠态: 拖动(折叠态)、数据刷新/收起的重排都会落到这里;
+    // 悬停展开态 (header 可见) 时跳过, 保证持久化的永远是折叠 frame → 杜绝重启上移.
+    @objc func panelMoved() {
+        if header != nil, header.isHidden { panel.saveFrame(usingName: "UsageMonitor") }
     }
 
     // 悬停显隐标题栏: 窗口向上长出一截放标题 (内容原地不动, 不遮挡内容);
