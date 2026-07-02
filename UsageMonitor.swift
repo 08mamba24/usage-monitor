@@ -698,11 +698,25 @@ final class App: NSObject, NSApplicationDelegate {
         let providers = compactProviders(payload, applyingSelection: false)
         let selected = Set(compactSelection())
         let menu = NSMenu()
-        for p in providers {
-            let item = NSMenuItem(title: p.name, action: #selector(toggleProvider(_:)), keyEquivalent: "")
-            item.target = self
+        // 用勾选框控件当菜单项 view: 普通 target/action 菜单项一点就整菜单关闭,
+        // 多选场景每勾一个都被迫重开; 带控件的 view 会自己吃掉点击, 菜单保持
+        // 打开 → 可连续勾选/取消。
+        let boxes: [NSButton] = providers.map { p in
+            let b = NSButton(checkboxWithTitle: p.name, target: self,
+                             action: #selector(toggleProvider(_:)))
+            b.identifier = NSUserInterfaceItemIdentifier(p.id)
+            b.state = selected.contains(p.id) ? .on : .off
+            b.sizeToFit()
+            return b
+        }
+        let itemW = (boxes.map { $0.frame.width }.max() ?? 120) + 32
+        for (p, box) in zip(providers, boxes) {
+            let item = NSMenuItem()
             item.representedObject = p.id
-            item.state = selected.contains(p.id) ? .on : .off
+            let host = NSView(frame: NSRect(x: 0, y: 0, width: itemW, height: 22))
+            box.setFrameOrigin(NSPoint(x: 20, y: (22 - box.frame.height) / 2))
+            host.addSubview(box)
+            item.view = host
             menu.addItem(item)
         }
         menu.addItem(.separator())
@@ -714,18 +728,29 @@ final class App: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc func toggleProvider(_ item: NSMenuItem) {
-        guard let id = item.representedObject as? String else { return }
-        guard let payload = last else { return }
+    @objc func toggleProvider(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue, let payload = last else { return }
         let available = compactProviders(payload, applyingSelection: false).map(\.id)
-        var selected = compactSelection().filter { available.contains($0) }
-        if selected.contains(id) {
-            selected.removeAll { $0 == id }
+        var chosen = Set(compactSelection().filter { available.contains($0) })
+        // 勾选框点击时已先翻转自身状态, 直接按新状态增删
+        if sender.state == .on {
+            // 已选满 4 个: 不静默挤掉别人, 直接拒绝本次勾选 (想换先取消一个), NSBeep 提示
+            if chosen.count >= 4 { sender.state = .off; NSSound.beep(); return }
+            chosen.insert(id)
         } else {
-            selected.append(id)
+            chosen.remove(id)
         }
+        // 显示顺序 = provider 自然顺序 (菜单顺序), 与勾选先后无关
+        var selected = available.filter { chosen.contains($0) }
         if selected.isEmpty { selected = defaultCompactIDs.filter { available.contains($0) } }
-        UserDefaults.standard.set(Array(selected.prefix(4)), forKey: "compactProviderIDs")
+        UserDefaults.standard.set(selected, forKey: "compactProviderIDs")
+        // 菜单不关闭, 回同步所有勾选框 (处理 空→默认 回填)
+        let shown = Set(selected)
+        for it in sender.enclosingMenuItem?.menu?.items ?? [] {
+            guard let b = it.view?.subviews.first(where: { $0 is NSButton }) as? NSButton,
+                  let bid = b.identifier?.rawValue else { continue }
+            b.state = shown.contains(bid) ? .on : .off
+        }
         render(payload)
     }
 
