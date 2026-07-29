@@ -17,7 +17,15 @@ fi
 
 command -v swiftc >/dev/null || {
     echo "Xcode Command Line Tools required: xcode-select --install"; exit 1; }
-swiftc -O -o usage-monitor UsageMonitor.swift
+# Some macOS beta / partially updated CLT installs expose a default SDK newer than
+# the bundled Swift module interfaces. The stable 15.4 SDK is sufficient for this
+# macOS 13+ app and avoids that mismatch when it is available.
+SDK15="$(xcrun --sdk macosx15.4 --show-sdk-path 2>/dev/null || true)"
+if [[ -n "$SDK15" ]]; then
+    swiftc -sdk "$SDK15" -O -o usage-monitor UsageMonitor.swift
+else
+    swiftc -O -o usage-monitor UsageMonitor.swift
+fi
 mkdir -p "$HOME/.config/usage-monitor"
 
 cat > "$PLIST" <<EOF

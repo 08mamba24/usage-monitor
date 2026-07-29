@@ -1,6 +1,6 @@
 # usage-monitor
 
-A native macOS always-on-top floating panel showing usage across your AI subscriptions — Claude, Codex, Gemini, GLM, MiniMax, DeepSeek — in one glance.
+A native macOS always-on-top monitor showing usage across your AI subscriptions — Claude, Codex, Gemini, GLM, MiniMax, DeepSeek — in one glance. On notched MacBooks, compact meters occupy the otherwise-unused menu-bar space immediately beside the camera.
 
 | List mode | Ring mode |
 |---|---|
@@ -24,6 +24,7 @@ Figuring out *"which AI should I use right now"* shouldn't be a query task — i
 - **Pace coloring**: window color reflects burn rate vs. reset time (green = sustainable … red = will exhaust before reset), same algorithm as the Claude Code statusline.
 - **Three complementary views**, deliberately different: the **list** carries the numbers (exact percentages, reset countdowns, plan & quota fine print); the **ring strip** is a compact single-row, pure-graphic glance at your chosen 4 providers — arcs and pace colors only (outer = 5h window, inner = 7d/weekly, smallest = monthly MCP quota), hover for details; the **bar strip** mirrors the ring strip with stacked horizontal meters instead of arcs. Cycle them with the view-toggle button (`◔` list → `▤` ring → `☰` bar), and pick which providers fill the compact strips via the `⚙` menu (up to 4, Reset Default to restore); mode and window position persist.
 - **Hover-only chrome**: at rest the panel is just rings/rows; hovering grows a title bar out of the top edge (content never moves) with the clock, the view-toggle (`◔` list → `▤` ring → `☰` bar), a `⚙` provider picker, refresh `↻`, and `✕` to hide the panel — it retracts when the mouse leaves. The app never quits on its own: `✕` only hides, and a small **menu-bar gauge** toggles the panel back; the launchd agent self-heals across crashes and logout.
+- **Notch-native layout**: on a notched MacBook, the default compact meters split around the camera as two frosted-glass wings (`NSVisualEffectView`, menu-bar material) with rounded corners, visually extending the hardware notch into a single vibrancy island. Hovering either wing opens one centered detail panel below the notch (same frosted glass, width aligned to the wings' outer edges); the upper wings become a single-line toolbar (last update time plus refresh, source picker and hide actions) whose buttons stretch to fill the wing. With three or fewer providers, recent analysis or an inspiration card alternates in a full-width hero line above the detailed meters; balance-only providers (DeepSeek) stack name / balance / today-spend vertically instead of overflowing. Lightweight local samples are retained for six hours only. The island re-snaps after display or scaling changes; displays without a notch keep the normal movable floating panel.
 - Native NSPanel + vibrancy, no Dock icon, auto-refresh every minute, `↻` for manual refresh, hover for details.
 
 ## Install

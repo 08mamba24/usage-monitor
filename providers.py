@@ -220,12 +220,12 @@ def p_deepseek():
     cur = "¥" if b.get("currency") == "CNY" else b.get("currency", "")
     total = float(b.get("total_balance") or 0)
     spend = day_spend("deepseek", total)
-    # 紧凑模式(圆环/条状)pill 显示今日消耗而非总余额; 余额仍在 value/悬停 tooltip
+    # 紧凑模式(圆环/条状)pill 显示今日消耗(带负号, 与 detail 一致) 而非总余额; 余额仍在 value/悬停 tooltip
     return row("deepseek", "DeepSeek", "balance", True,
                value=f"{cur}{total:.2f}",
                detail=f"today -{cur}{spend:.2f}"
                       + ("" if d.get("is_available", True) else " · unavailable"),
-               cval=f"{cur}{spend:.2f}")
+               cval=f"-{cur}{spend:.2f}")
 
 
 @provider("claude", "Claude")
@@ -347,29 +347,44 @@ def p_codex():
                    main_window_ms=pwin_ms)
 
 
-def _gemini_client():
-    """运行时从本机 gemini-cli 提取其 OAuth client 常量 (installed-app 凭据, 公开但
-    GitHub push protection 按模式拦截, 故不内置源码); refresh_token 与该 client 绑定"""
-    cands = [shutil.which("gemini"), "/opt/homebrew/bin/gemini", "/usr/local/bin/gemini"]
-    path = next((p for p in cands if p and os.path.exists(p)), None)
-    if not path:
-        raise MissingCred("gemini CLI not found")
-    # 真身是 node 包里的 js; 常量可能在任一打包分片中, 遍历包目录查找
-    root = os.path.dirname(os.path.dirname(os.path.realpath(path)))
-    for dirpath, _, files in os.walk(root):
-        for fn in files:
-            if not fn.endswith((".js", ".cjs", ".mjs")):
-                continue
-            src = open(os.path.join(dirpath, fn), errors="ignore").read()
-            sec = re.search(r"GOCSPX-[\w-]+", src)
-            if not sec:
-                continue
-            # 同文件可能混有 gcloud 等其他 client id, 取离 secret 最近的 (源码中两常量相邻)
-            ids = [(m.start(), m.group())
-                   for m in re.finditer(r"\d+-[a-z0-9]+\.apps\.googleusercontent\.com", src)]
-            if ids:
-                return min(ids, key=lambda t: abs(t[0] - sec.start()))[1], sec.group()
-    raise MissingCred("gemini client constants not found")
+def _gemini_clients():
+    """返回 [(client_id, client_secret), ...] 候选列表, 运行时从本机 agy (Antigravity CLI,
+    gemini-cli 2026-06-18 停服后的继任者) 优先, 回退旧 gemini-cli node 包。
+    installed-app 凭据公开, 但 GitHub push protection 按模式拦截 secret, 故不内置源码;
+    refresh_token 与签发它的 client 绑定, agy 复用 gemini-cli 的 client, 多候选时逐个尝试刷新"""
+    out = []
+    # 1. agy (Go 二进制) — 相邻 secret 在二进制里可能粘连, 按 GOCSPX- 前缀切分
+    agy = shutil.which("agy") or os.path.expanduser("~/.local/bin/agy")
+    if agy and os.path.exists(agy):
+        try:
+            raw = open(agy, "rb").read()
+            ids = [i.decode() for i in re.findall(rb"\d+-[a-z0-9]+\.apps\.googleusercontent\.com", raw)]
+            secs = []
+            for b in re.findall(rb"GOCSPX-[A-Za-z0-9_-]+", raw):
+                secs += [s.decode() for s in re.split(rb"(?=GOCSPX-)", b) if s.startswith(b"GOCSPX-")]
+            out += [(i, s) for i in ids for s in secs]
+        except Exception:
+            pass
+    # 2. 回退: 旧 gemini-cli (node 包) — 遍历包目录 grep .js 分片
+    for gp in [shutil.which("gemini"), "/opt/homebrew/bin/gemini", "/usr/local/bin/gemini"]:
+        if not gp or not os.path.exists(gp):
+            continue
+        root = os.path.dirname(os.path.dirname(os.path.realpath(gp)))
+        for dirpath, _, files in os.walk(root):
+            for fn in files:
+                if not fn.endswith((".js", ".cjs", ".mjs")):
+                    continue
+                src = open(os.path.join(dirpath, fn), errors="ignore").read()
+                sec = re.search(r"GOCSPX-[\w-]+", src)
+                if not sec:
+                    continue
+                ids = [m.group() for m in re.finditer(r"\d+-[a-z0-9]+\.apps\.googleusercontent\.com", src)]
+                out += [(i, sec.group()) for i in ids]
+        break
+    if not out:
+        raise MissingCred("agy / gemini CLI not found")
+    seen = set()
+    return [c for c in out if not (c in seen or seen.add(c))]
 
 
 @provider("gemini", "Gemini")
@@ -378,20 +393,24 @@ def p_gemini():
     creds = _json_file(path)
     if not creds.get("refresh_token"):
         raise MissingCred("run gemini CLI login once")
-    # access_token 1h 过期: 临期则用 refresh_token 静默换新并回写 (与 CLI 共用凭据文件)
+    # access_token 1h 过期: 临期则用 refresh_token 静默换新并回写 (与 agy/gemini-cli 共用凭据文件)
     now_ms = datetime.datetime.now().timestamp() * 1000
     if creds.get("expiry_date", 0) < now_ms + 60000:
-        cid, csecret = _gemini_client()
-        try:
-            tok = http_json("https://oauth2.googleapis.com/token",
-                            {"Content-Type": "application/x-www-form-urlencoded"},
-                            data=urllib.parse.urlencode({
-                                "grant_type": "refresh_token",
-                                "refresh_token": creds["refresh_token"],
-                                "client_id": cid,
-                                "client_secret": csecret}).encode())
-        except Exception:
-            raise MissingCred("gemini re-login needed")
+        tok = None
+        for cid, csecret in _gemini_clients():   # 多候选逐个试, refresh_token 只在匹配的 client 上刷成
+            try:
+                tok = http_json("https://oauth2.googleapis.com/token",
+                                {"Content-Type": "application/x-www-form-urlencoded"},
+                                data=urllib.parse.urlencode({
+                                    "grant_type": "refresh_token",
+                                    "refresh_token": creds["refresh_token"],
+                                    "client_id": cid,
+                                    "client_secret": csecret}).encode())
+                break
+            except Exception:
+                continue
+        if not tok:
+            raise MissingCred("gemini/agy re-login needed")
         creds.update(access_token=tok["access_token"],
                      expiry_date=int(now_ms + tok.get("expires_in", 3600) * 1000))
         json.dump(creds, open(path, "w"))
