@@ -831,8 +831,7 @@ final class App: NSObject, NSApplicationDelegate {
     let balanceCellW: CGFloat = 64 // 余额 pill 单格宽
     let notchDetailCellW: CGFloat = 112
     let notchBalanceDetailW: CGFloat = 96
-    let notchBackdropBleed: CGFloat = 2
-    let notchWingInset: CGFloat = 3
+    let notchBackdropBleed: CGFloat = 4
     let headerMinW: CGFloat = 138 // 时间 + 操作按钮的最低可用宽度
     let defaultCompactIDs = ["claude", "codex", "glm", "minimax"]
     var headerW: NSLayoutConstraint!
@@ -1153,18 +1152,18 @@ final class App: NSObject, NSApplicationDelegate {
     // 用纯黑底色吃掉多个无边框窗口之间可能出现的 1px 合成缝。
     func snapPanelToNotch() {
         guard let target = notchTarget() else { return }
-        let seamOverlap: CGFloat = 2
+        // seamOverlap 让翼内侧盖进刘海物理区域: 刘海硬件是圆角矩形,
+        // 顶部/底部圆角段物理边缘内缩, 盖进太少会露出菜单栏毛玻璃 → 缝隙。
+        // 5pt 与翼内容内边距(wingStack leading/trailing 5pt)对齐, 不遮挡内容。
+        let seamOverlap: CGFloat = 5
         snappingToNotch = true
 
-        // 展开态让翼底部贴到 leftArea.minY (与下方 panel 顶部严丝合缝),
-        // 消除"上下两个方框"之间的间隙 → 视觉合并为一整块圆角矩形;
-        // 静止态保留底部缩进, 不超出 auxiliaryTopLeftArea 安全区。
-        let bottomInset: CGFloat = notchExpanded ? 0 : notchWingInset
-
+        // 翼填满 auxiliaryTopLeftArea/RightArea 全高: 顶部顶到屏幕顶端,
+        // 底部贴菜单栏底缘, 消除"翼和屏幕最上端的缝隙"。
         var lf = notchLeftPanel.frame
-        lf.size.height = target.leftArea.height - notchWingInset - bottomInset
+        lf.size.height = target.leftArea.height
         lf.origin.x = target.leftArea.maxX - lf.width + seamOverlap
-        lf.origin.y = target.leftArea.minY + bottomInset
+        lf.origin.y = target.leftArea.minY
         if lf.minX < target.leftArea.minX {
             lf.size.width = target.leftArea.width
             lf.origin.x = target.leftArea.minX
@@ -1172,9 +1171,9 @@ final class App: NSObject, NSApplicationDelegate {
         notchLeftPanel.setFrame(lf, display: true)
 
         var rf = notchRightPanel.frame
-        rf.size.height = target.rightArea.height - notchWingInset - bottomInset
+        rf.size.height = target.rightArea.height
         rf.origin.x = target.rightArea.minX - seamOverlap
-        rf.origin.y = target.rightArea.minY + bottomInset
+        rf.origin.y = target.rightArea.minY
         if rf.maxX > target.rightArea.maxX {
             rf.size.width = target.rightArea.width
         }
@@ -1189,7 +1188,7 @@ final class App: NSObject, NSApplicationDelegate {
         let backdrop = NSRect(x: covered.minX - bleed,
                               y: covered.minY - bleed,
                               width: covered.width + bleed * 2,
-                              height: covered.height + bleed)
+                              height: covered.height + bleed * 2)
         notchBackdropPanel.setFrame(backdrop, display: true)
         updateWingAppearance(expanded: notchExpanded)
         snappingToNotch = false
