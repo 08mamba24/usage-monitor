@@ -1156,10 +1156,15 @@ final class App: NSObject, NSApplicationDelegate {
         let seamOverlap: CGFloat = 2
         snappingToNotch = true
 
+        // 展开态让翼底部贴到 leftArea.minY (与下方 panel 顶部严丝合缝),
+        // 消除"上下两个方框"之间的间隙 → 视觉合并为一整块圆角矩形;
+        // 静止态保留底部缩进, 不超出 auxiliaryTopLeftArea 安全区。
+        let bottomInset: CGFloat = notchExpanded ? 0 : notchWingInset
+
         var lf = notchLeftPanel.frame
-        lf.size.height = target.leftArea.height - notchWingInset * 2
+        lf.size.height = target.leftArea.height - notchWingInset - bottomInset
         lf.origin.x = target.leftArea.maxX - lf.width + seamOverlap
-        lf.origin.y = target.leftArea.minY + notchWingInset
+        lf.origin.y = target.leftArea.minY + bottomInset
         if lf.minX < target.leftArea.minX {
             lf.size.width = target.leftArea.width
             lf.origin.x = target.leftArea.minX
@@ -1167,9 +1172,9 @@ final class App: NSObject, NSApplicationDelegate {
         notchLeftPanel.setFrame(lf, display: true)
 
         var rf = notchRightPanel.frame
-        rf.size.height = target.rightArea.height - notchWingInset * 2
+        rf.size.height = target.rightArea.height - notchWingInset - bottomInset
         rf.origin.x = target.rightArea.minX - seamOverlap
-        rf.origin.y = target.rightArea.minY + notchWingInset
+        rf.origin.y = target.rightArea.minY + bottomInset
         if rf.maxX > target.rightArea.maxX {
             rf.size.width = target.rightArea.width
         }
@@ -1186,7 +1191,35 @@ final class App: NSObject, NSApplicationDelegate {
                               width: covered.width + bleed * 2,
                               height: covered.height + bleed)
         notchBackdropPanel.setFrame(backdrop, display: true)
+        updateWingAppearance(expanded: notchExpanded)
         snappingToNotch = false
+    }
+
+    func updateWingAppearance(expanded: Bool) {
+        if expanded {
+            // 展开态: 两翼只圆顶部 (底部直角与下方 panel 对接 → 上下连成一整块)
+            applyWingCorners(notchLeftPanel, radius: 12,
+                             mask: [.layerMinXMaxYCorner, .layerMaxXMaxYCorner])
+            applyWingCorners(notchRightPanel, radius: 12,
+                             mask: [.layerMinXMaxYCorner, .layerMaxXMaxYCorner])
+        } else {
+            // 静止态: 内侧(靠刘海)直角与黑色背板连续 → 两翼+刘海视觉合成一整块胶囊;
+            // 仅外侧两角圆角收边。
+            applyWingCorners(notchLeftPanel, radius: 8,
+                             mask: [.layerMinXMinYCorner, .layerMinXMaxYCorner])
+            applyWingCorners(notchRightPanel, radius: 8,
+                             mask: [.layerMaxXMinYCorner, .layerMaxXMaxYCorner])
+        }
+    }
+
+    func applyWingCorners(_ wingPanel: NSPanel, radius: CGFloat, mask: CACornerMask) {
+        guard let wing = wingPanel.contentView as? PanelBackground else { return }
+        wing.layer?.cornerRadius = radius
+        wing.layer?.maskedCorners = mask
+        if let effect = wing.subviews.compactMap({ $0 as? NSVisualEffectView }).first {
+            effect.layer?.cornerRadius = radius
+            effect.layer?.maskedCorners = mask
+        }
     }
 
     func positionExpandedPanel() {
