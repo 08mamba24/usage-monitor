@@ -165,10 +165,12 @@ def pct_row(pid, name, used5, reset_ms=None, *details,
 
 
 def fmt_ms(ms):
-    """自适应单位, 只显示最高位: <1h → '45m', <24h → '4h', 其余 → '3d'"""
+    """自适应单位: <1h → '45m', <6h → '2.5h', <24h → '8h', 其余 → '3d'"""
     m = int(ms / 60000)
     if m < 60:
         return f"{m}m"
+    if m < 6 * 60:
+        return f"{round(m / 60, 1):g}h"
     h = round(m / 60)
     return f"{h}h" if h < 24 else f"{round(h / 24)}d"
 
