@@ -4,7 +4,7 @@ let compactClaude = Provider(
     id: "claude", name: "Claude", kind: "percent", ok: true,
     pct: 2, value: "5h 2% /2.5h", detail: "7d 3% /6d · max 20x",
     tone: nil, wins: nil, cval: nil)
-guard notchDetailName(compactClaude) == "Ant" else {
+guard notchCompactName(compactClaude) == "Ant" else {
     fputs("FAIL: compact Claude name should be Ant\n", stderr)
     exit(1)
 }
@@ -36,7 +36,7 @@ guard let planLabel = compactClaudeLabels.first(where: { $0.stringValue == "max 
 let compactGLM = Provider(
     id: "glm", name: "GLM", kind: "percent", ok: true,
     pct: 0, value: "5h 0% /4.2h", detail: "", tone: nil, wins: nil, cval: nil)
-guard notchDetailName(compactGLM) == "ZAI" else {
+guard notchCompactName(compactGLM) == "ZAI" else {
     fputs("FAIL: compact GLM name should be ZAI\n", stderr)
     exit(1)
 }
@@ -59,6 +59,34 @@ guard createdWindowCount == 3 else {
         "(created=\(createdWindowCount))\n",
         stderr
     )
+    exit(1)
+}
+
+let insightClaude = Provider(
+    id: "claude", name: "Claude", kind: "percent", ok: true,
+    pct: 2, value: "5h 2% /2.5h", detail: "7d 3% /6d · max 20x",
+    tone: "green",
+    wins: [Win(label: "5h", pct: 2, reset: "2.5h", tone: "green")],
+    cval: nil)
+let insightPayload = Payload(updated: "12:00", providers: [insightClaude])
+subject.usageHistory = [UsageSample(
+    timestamp: Date().timeIntervalSince1970 - 3600,
+    percentages: ["claude": 0])]
+guard subject.recentUsageInsight(insightPayload).rightTitle == "Ant +2pt" else {
+    fputs("FAIL: recent usage insight should use the compact Claude name\n", stderr)
+    exit(1)
+}
+
+let fastClaude = Provider(
+    id: "claude", name: "Claude", kind: "percent", ok: true,
+    pct: 80, value: "5h 80% /2.5h", detail: "7d 3% /6d · max 20x",
+    tone: "orange",
+    wins: [Win(label: "5h", pct: 80, reset: "2.5h", tone: "orange")],
+    cval: nil)
+subject.usageHistory = []
+guard subject.recentUsageInsight(
+    Payload(updated: "12:00", providers: [fastClaude])).rightTitle == "Ant偏快" else {
+    fputs("FAIL: pace insight should use the compact Claude name\n", stderr)
     exit(1)
 }
 

@@ -49,9 +49,9 @@ func pctColor(_ pct: Double) -> NSColor {
     pct >= 90 ? .systemRed : pct >= 70 ? .systemOrange : pct >= 50 ? .systemYellow : .systemGreen
 }
 
-// 刘海三列详情空间最紧，只在这里使用与收起态首字母一致的短品牌名，
-// 并省略重置时间前的斜杠；普通列表和数据契约仍保留正式名称与原格式。
-func notchDetailName(_ provider: Provider) -> String {
+// 刘海紧凑区域使用与收起态首字母一致的短品牌名；
+// 普通列表和数据契约仍保留正式名称。
+func notchCompactName(_ provider: Provider) -> String {
     switch provider.id {
     case "claude": "Ant"
     case "glm": "ZAI"
@@ -675,7 +675,7 @@ final class NotchDetailCell: NSView {
         let compactBalanceDetail = p.detail
             .components(separatedBy: " · ").first?
             .replacingOccurrences(of: "today ", with: "") ?? ""
-        nameLabel.stringValue = notchDetailName(p)
+        nameLabel.stringValue = notchCompactName(p)
         nameLabel.font = .systemFont(
             ofSize: balanceOnly ? 8.5 : 9.5, weight: .semibold)
         valueLabel.stringValue = notchDetailValue(p)
@@ -1906,7 +1906,9 @@ final class App: NSObject, NSApplicationDelegate {
                 let active = deltas.max { $0.1 < $1.1 }
                 let leftTitle = total < 0.5 ? "\(period) 平稳" : "\(period) +\(Int(round(total)))pt"
                 let rightTitle = active.map {
-                    $0.1 < 0.5 ? "无明显增长" : "\($0.0.name) +\(Int(round($0.1)))pt"
+                    $0.1 < 0.5
+                        ? "无明显增长"
+                        : "\(notchCompactName($0.0)) +\(Int(round($0.1)))pt"
                 } ?? "无明显增长"
                 return (leftTitle, "总用量变化", total >= 20 ? .systemOrange : nil,
                         rightTitle, "最近最活跃",
@@ -1920,7 +1922,7 @@ final class App: NSObject, NSApplicationDelegate {
         }
         if let focus, let tone = focus.tone, tone == "red" || tone == "orange" {
             return ("趋势采集中", "本地轻量采样", nil,
-                    "\(focus.name)偏快", "当前消耗速度", paceColor(tone))
+                    "\(notchCompactName(focus))偏快", "当前消耗速度", paceColor(tone))
         }
         return ("趋势采集中", "约 5 分钟后可用", nil,
                 "当前较平稳", "持续观察中", .systemGreen)
