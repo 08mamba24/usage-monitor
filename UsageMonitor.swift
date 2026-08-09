@@ -49,6 +49,41 @@ func pctColor(_ pct: Double) -> NSColor {
     pct >= 90 ? .systemRed : pct >= 70 ? .systemOrange : pct >= 50 ? .systemYellow : .systemGreen
 }
 
+// 刘海紧凑区域使用与收起态首字母一致的短品牌名；
+// 普通列表和数据契约仍保留正式名称。
+func notchCompactName(_ provider: Provider) -> String {
+    switch provider.id {
+    case "claude": "Ant"
+    case "glm": "ZAI"
+    default: provider.name
+    }
+}
+
+func notchDetailValue(_ provider: Provider) -> String {
+    provider.value.replacingOccurrences(of: " /", with: " ")
+}
+
+struct NotchDetailSecondaryText {
+    let leading: String
+    let trailing: String
+}
+
+func notchDetailSecondary(_ provider: Provider) -> NotchDetailSecondaryText {
+    let parts = provider.detail.components(separatedBy: " · ")
+    guard let first = parts.first else {
+        return NotchDetailSecondaryText(leading: "", trailing: "")
+    }
+    let usage = first.replacingOccurrences(of: " /", with: " ")
+    guard provider.id == "claude" else {
+        return NotchDetailSecondaryText(leading: usage, trailing: "")
+    }
+
+    let plan = parts.dropFirst().first(where: {
+        $0 == "pro" || $0 == "max" || $0.hasPrefix("max ")
+    }) ?? ""
+    return NotchDetailSecondaryText(leading: plan, trailing: usage)
+}
+
 // 容器: 强制箭头光标 (NSTextField 会显 I-beam) + 圆角裁切;
 // 毛玻璃作为子层独立调透明度, 不影响其上的文字;
 // 跟踪鼠标进出 (悬停时才显示标题栏按钮)
@@ -531,6 +566,7 @@ final class NotchDetailCell: NSView {
     private let nameLabel = NSTextField(labelWithString: "")
     private let valueLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
+    private let secondaryDetailLabel = NSTextField(labelWithString: "")
     private let primaryTrack = NSView()
     private let primaryFill = NSView()
     private let secondaryTrack = NSView()
@@ -545,6 +581,8 @@ final class NotchDetailCell: NSView {
     private var valueBalanceLeading: NSLayoutConstraint!
     private var valueBalanceCenterY: NSLayoutConstraint!
     private var valueDetailBaseline: NSLayoutConstraint!
+    private var detailFullTrailing: NSLayoutConstraint!
+    private var detailSplitTrailing: NSLayoutConstraint!
     private var meterW: CGFloat = 96
 
     override init(frame: NSRect) {
@@ -560,6 +598,11 @@ final class NotchDetailCell: NSView {
         detailLabel.font = .systemFont(ofSize: 7.5)
         detailLabel.textColor = .tertiaryLabelColor
         detailLabel.lineBreakMode = .byTruncatingTail
+        secondaryDetailLabel.font = .systemFont(ofSize: 7.5)
+        secondaryDetailLabel.textColor = .tertiaryLabelColor
+        secondaryDetailLabel.alignment = .right
+        secondaryDetailLabel.lineBreakMode = .byTruncatingHead
+        secondaryDetailLabel.isHidden = true
 
         for track in [primaryTrack, secondaryTrack] {
             track.wantsLayer = true
@@ -570,8 +613,8 @@ final class NotchDetailCell: NSView {
             fill.wantsLayer = true
             fill.layer?.cornerRadius = 1.5
         }
-        for v in [nameLabel, valueLabel, detailLabel, primaryTrack, primaryFill,
-                  secondaryTrack, secondaryFill] {
+        for v in [nameLabel, valueLabel, detailLabel, secondaryDetailLabel,
+                  primaryTrack, primaryFill, secondaryTrack, secondaryFill] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -587,6 +630,10 @@ final class NotchDetailCell: NSView {
         valueBalanceLeading = valueLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8)
         valueBalanceCenterY = valueLabel.centerYAnchor.constraint(equalTo: centerYAnchor)
         valueDetailBaseline = valueLabel.centerYAnchor.constraint(equalTo: detailLabel.centerYAnchor)
+        detailFullTrailing = detailLabel.trailingAnchor.constraint(
+            equalTo: trailingAnchor, constant: -8)
+        detailSplitTrailing = detailLabel.trailingAnchor.constraint(
+            lessThanOrEqualTo: secondaryDetailLabel.leadingAnchor, constant: -5)
         NSLayoutConstraint.activate([
             cellWidth,
             heightAnchor.constraint(equalToConstant: 46),
@@ -612,8 +659,10 @@ final class NotchDetailCell: NSView {
             secondaryFill.heightAnchor.constraint(equalToConstant: 2),
             secondaryWidth,
             detailLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            detailLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            detailFullTrailing,
             detailLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            secondaryDetailLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            secondaryDetailLabel.centerYAnchor.constraint(equalTo: detailLabel.centerYAnchor),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -626,13 +675,17 @@ final class NotchDetailCell: NSView {
         let compactBalanceDetail = p.detail
             .components(separatedBy: " · ").first?
             .replacingOccurrences(of: "today ", with: "") ?? ""
-        nameLabel.stringValue = p.name
+        nameLabel.stringValue = notchCompactName(p)
         nameLabel.font = .systemFont(
             ofSize: balanceOnly ? 8.5 : 9.5, weight: .semibold)
-        valueLabel.stringValue = p.value
-        detailLabel.stringValue = balanceOnly
-            ? compactBalanceDetail
-            : (p.detail.components(separatedBy: " · ").first ?? "")
+        valueLabel.stringValue = notchDetailValue(p)
+        let secondaryText = notchDetailSecondary(p)
+        let splitsSecondary = !balanceOnly && !secondaryText.trailing.isEmpty
+        detailLabel.stringValue = balanceOnly ? compactBalanceDetail : secondaryText.leading
+        secondaryDetailLabel.stringValue = splitsSecondary ? secondaryText.trailing : ""
+        detailFullTrailing.isActive = !splitsSecondary
+        detailSplitTrailing.isActive = splitsSecondary
+        secondaryDetailLabel.isHidden = !splitsSecondary
         toolTip = "\(p.name)  \(p.value)" + (p.detail.isEmpty ? "" : " · \(p.detail)")
 
         nameLabel.isHidden = false
@@ -776,9 +829,6 @@ final class App: NSObject, NSApplicationDelegate {
     let notchRightPanel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 78, height: 30),
                                   styleMask: [.borderless, .nonactivatingPanel],
                                   backing: .buffered, defer: false)
-    let notchBackdropPanel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 180, height: 30),
-                                     styleMask: [.borderless, .nonactivatingPanel],
-                                     backing: .buffered, defer: false)
     let notchLeftStack = NSStackView()
     let notchRightStack = NSStackView()
     let notchLeftInsight = NotchInsightCell()
@@ -831,7 +881,6 @@ final class App: NSObject, NSApplicationDelegate {
     let balanceCellW: CGFloat = 64 // 余额 pill 单格宽
     let notchDetailCellW: CGFloat = 112
     let notchBalanceDetailW: CGFloat = 96
-    let notchBackdropBleed: CGFloat = 4
     let headerMinW: CGFloat = 138 // 时间 + 操作按钮的最低可用宽度
     let defaultCompactIDs = ["claude", "codex", "glm", "minimax"]
     var headerW: NSLayoutConstraint!
@@ -1038,7 +1087,6 @@ final class App: NSObject, NSApplicationDelegate {
             layoutPanel(anchorTop: false)   // 按 headerGrewDown 原方向对称回退
         }
         hovered = false   // 重置悬停态, 否则下次调回来时 hover-in 被 (inside==hovered) 吞掉, 标题栏再也展不开
-        notchBackdropPanel.orderOut(nil)
         notchLeftPanel.orderOut(nil)
         notchRightPanel.orderOut(nil)
         panel.orderOut(nil)
@@ -1074,7 +1122,6 @@ final class App: NSObject, NSApplicationDelegate {
     @objc func screenParametersChanged() {
         panel.level = isNotchPinned ? .statusBar : .floating
         panel.isMovableByWindowBackground = !isNotchPinned
-        notchBackdropPanel.level = isNotchPinned ? .statusBar : .floating
         notchLeftPanel.level = isNotchPinned ? .statusBar : .floating
         notchRightPanel.level = isNotchPinned ? .statusBar : .floating
         snapPanelToNotch()
@@ -1082,20 +1129,6 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     func configureNotchPanels() {
-        notchBackdropPanel.level = .statusBar
-        notchBackdropPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        notchBackdropPanel.isOpaque = false
-        notchBackdropPanel.backgroundColor = .clear
-        notchBackdropPanel.isMovableByWindowBackground = false
-        notchBackdropPanel.hidesOnDeactivate = false
-        notchBackdropPanel.hasShadow = false
-        notchBackdropPanel.ignoresMouseEvents = true
-        let backdrop = NSView()
-        backdrop.wantsLayer = true
-        backdrop.layer?.backgroundColor = NSColor.black.cgColor
-        backdrop.layer?.masksToBounds = true
-        notchBackdropPanel.contentView = backdrop
-
         configureNotchWing(notchLeftPanel, stack: notchLeftStack, isLeft: true)
         configureNotchWing(notchRightPanel, stack: notchRightStack, isLeft: false)
     }
@@ -1147,9 +1180,7 @@ final class App: NSObject, NSApplicationDelegate {
         ])
     }
 
-    // 静止态两个黑色双翼贴住硬件刘海，展开面板则居中接在刘海下缘。
-    // 独立底板始终比前景轮廓略大，展开时延伸到内容面板底部，
-    // 用纯黑底色吃掉多个无边框窗口之间可能出现的 1px 合成缝。
+    // 静止态两个磨砂玻璃双翼贴住硬件刘海，展开面板则居中接在刘海下缘。
     func snapPanelToNotch() {
         guard let target = notchTarget() else { return }
         // seamOverlap 让翼内侧盖进刘海物理区域: 刘海硬件是圆角矩形,
@@ -1180,16 +1211,6 @@ final class App: NSObject, NSApplicationDelegate {
         notchRightPanel.setFrame(rf, display: true)
 
         positionExpandedPanel()
-        let centerStripe = NSRect(x: lf.maxX, y: min(lf.minY, rf.minY),
-                                  width: rf.minX - lf.maxX,
-                                  height: max(lf.maxY, rf.maxY) - min(lf.minY, rf.minY))
-        let covered = centerStripe
-        let bleed = notchBackdropBleed
-        let backdrop = NSRect(x: covered.minX - bleed,
-                              y: covered.minY - bleed,
-                              width: covered.width + bleed * 2,
-                              height: covered.height + bleed * 2)
-        notchBackdropPanel.setFrame(backdrop, display: true)
         updateWingAppearance(expanded: notchExpanded)
         snappingToNotch = false
     }
@@ -1202,7 +1223,7 @@ final class App: NSObject, NSApplicationDelegate {
             applyWingCorners(notchRightPanel, radius: 12,
                              mask: [.layerMinXMaxYCorner, .layerMaxXMaxYCorner])
         } else {
-            // 静止态: 内侧(靠刘海)直角与黑色背板连续 → 两翼+刘海视觉合成一整块胶囊;
+            // 静止态: 内侧直角盖进硬件刘海的黑色区域 → 两翼+刘海视觉合成一整块胶囊;
             // 仅外侧两角圆角收边。
             applyWingCorners(notchLeftPanel, radius: 8,
                              mask: [.layerMinXMinYCorner, .layerMinXMaxYCorner])
@@ -1234,16 +1255,12 @@ final class App: NSObject, NSApplicationDelegate {
 
     func updateNotchWingVisibility() {
         guard isNotchPinned, notchUIVisible else {
-            notchBackdropPanel.orderOut(nil)
             notchLeftPanel.orderOut(nil)
             notchRightPanel.orderOut(nil)
             return
         }
-        notchBackdropPanel.orderFrontRegardless()
-        // 背板覆盖展开区来消除接缝，但只能位于内容面板下方。
-        // 双翼异步切换完成后会再次进入这里；若不重新提升 panel，
-        // orderFrontRegardless() 会把整块黑背板盖到详情内容上。
         if notchExpanded {
+            // 双翼异步切换完成后会再次进入这里；保持详情面板位于前景。
             panel.orderFrontRegardless()
         }
         if notchLeftStack.arrangedSubviews.isEmpty { notchLeftPanel.orderOut(nil) }
@@ -1708,7 +1725,7 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     func notchDetailWidth(providerCount: Int) -> CGFloat {
-        // 展开层的外宽始终与上方整块黑色刘海区域一致；减去左右 8pt 内边距。
+        // 展开层的外宽始终与上方整块刘海岛一致；减去左右 8pt 内边距。
         // 这里读取前景双翼的固定跨度，不能读取会随展开态外扩的底板宽度。
         let notchWidth = notchRightPanel.frame.maxX - notchLeftPanel.frame.minX
         if notchWidth > 16 { return notchWidth - 16 }
@@ -1889,7 +1906,9 @@ final class App: NSObject, NSApplicationDelegate {
                 let active = deltas.max { $0.1 < $1.1 }
                 let leftTitle = total < 0.5 ? "\(period) 平稳" : "\(period) +\(Int(round(total)))pt"
                 let rightTitle = active.map {
-                    $0.1 < 0.5 ? "无明显增长" : "\($0.0.name) +\(Int(round($0.1)))pt"
+                    $0.1 < 0.5
+                        ? "无明显增长"
+                        : "\(notchCompactName($0.0)) +\(Int(round($0.1)))pt"
                 } ?? "无明显增长"
                 return (leftTitle, "总用量变化", total >= 20 ? .systemOrange : nil,
                         rightTitle, "最近最活跃",
@@ -1903,7 +1922,7 @@ final class App: NSObject, NSApplicationDelegate {
         }
         if let focus, let tone = focus.tone, tone == "red" || tone == "orange" {
             return ("趋势采集中", "本地轻量采样", nil,
-                    "\(focus.name)偏快", "当前消耗速度", paceColor(tone))
+                    "\(notchCompactName(focus))偏快", "当前消耗速度", paceColor(tone))
         }
         return ("趋势采集中", "约 5 分钟后可用", nil,
                 "当前较平稳", "持续观察中", .systemGreen)
