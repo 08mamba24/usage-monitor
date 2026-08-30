@@ -49,8 +49,8 @@ func pctColor(_ pct: Double) -> NSColor {
     pct >= 90 ? .systemRed : pct >= 70 ? .systemOrange : pct >= 50 ? .systemYellow : .systemGreen
 }
 
-// 刘海紧凑区域使用与收起态首字母一致的短品牌名；
-// 普通列表和数据契约仍保留正式名称。
+// 刘海区域与设置菜单共用短品牌名，保证"显示的名字"与"勾选的名字"一致；
+// tooltip 与数据契约仍保留正式名称。
 func notchCompactName(_ provider: Provider) -> String {
     switch provider.id {
     case "claude": "Ant"
@@ -106,6 +106,26 @@ final class PanelBackground: NSView {
         addCursorRect(bounds, cursor: .arrow)
     }
     override func cursorUpdate(with event: NSEvent) { NSCursor.arrow.set() }
+}
+
+// 悬停停留门: 路过刘海去点标签页时不要立刻展开。
+final class HoverDwell {
+    var delay: TimeInterval
+    private var work: DispatchWorkItem?
+
+    init(delay: TimeInterval) { self.delay = delay }
+
+    func arm(_ execute: @escaping () -> Void) {
+        cancel()
+        let item = DispatchWorkItem(block: execute)
+        work = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
+    func cancel() {
+        work?.cancel()
+        work = nil
+    }
 }
 
 // ── 单行视图：名称 + 值 + 进度条/小字 ─────────────────────────────────────────
@@ -889,6 +909,8 @@ final class App: NSObject, NSApplicationDelegate {
     var notchExpanded = false
     var notchUIVisible = true
     var notchCollapseWork: DispatchWorkItem?
+    // 0.3s: 划过刘海去点浏览器标签页够用, 真要看用量时也不至于发愣。
+    let notchExpandDwell = HoverDwell(delay: 0.3)
 
     // 刘海左右两侧是 macOS 明确暴露的可用区域。优先使用内建屏幕的右侧区域，
     // 没有刘海（外接显示器）时返回 nil，继续沿用普通悬浮窗行为。
@@ -1079,6 +1101,7 @@ final class App: NSObject, NSApplicationDelegate {
         notchUIVisible = false
         notchExpanded = false
         notchCollapseWork?.cancel()
+        notchExpandDwell.cancel()
         if let last { renderNotchWings(last) }
         notchLeftStack.alphaValue = 1
         notchRightStack.alphaValue = 1
@@ -1273,8 +1296,10 @@ final class App: NSObject, NSApplicationDelegate {
         guard isNotchPinned, notchUIVisible, last != nil else { return }
         if inside {
             notchCollapseWork?.cancel()
-            showNotchDetails()
+            guard !notchExpanded else { return }
+            notchExpandDwell.arm { [weak self] in self?.showNotchDetails() }
         } else {
+            notchExpandDwell.cancel()
             scheduleNotchCollapse()
         }
     }
@@ -1317,6 +1342,7 @@ final class App: NSObject, NSApplicationDelegate {
 
     func hideNotchDetails() {
         guard notchExpanded else { return }
+        notchExpandDwell.cancel()
         notchExpanded = false
         transitionNotchWingContent()
         NSAnimationContext.runAnimationGroup({ ctx in
@@ -1423,7 +1449,8 @@ final class App: NSObject, NSApplicationDelegate {
         // 多选场景每勾一个都被迫重开; 带控件的 view 会自己吃掉点击, 菜单保持
         // 打开 → 可连续勾选/取消。
         let boxes: [NSButton] = providers.map { p in
-            let b = NSButton(checkboxWithTitle: p.name, target: self,
+            // 勾选项用与面板显示一致的短名, 避免"显示 ZAI / 勾选 GLM"的错位感
+            let b = NSButton(checkboxWithTitle: notchCompactName(p), target: self,
                              action: #selector(toggleProvider(_:)))
             b.identifier = NSUserInterfaceItemIdentifier(p.id)
             b.state = selected.contains(p.id) ? .on : .off
