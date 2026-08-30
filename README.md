@@ -58,8 +58,9 @@ Requirements: Windows 10/11 + Python 3.9+ from python.org (tkinter included, no 
 | GLM (z.ai coding plan) | 5h window, monthly MCP quota | `GLM_API_KEY` / opencode / hermes |
 | MiniMax coding plan | 5h + weekly windows | `MINIMAX_API_KEY` / opencode / hermes |
 | DeepSeek (prepaid) | balance + today's spend | `DEEPSEEK_API_KEY` / opencode |
+| Custom endpoint | any percentage or used-vs-total | `CUSTOM_USAGE_URL` (+ optional token / path / name) → env |
 
-API-key providers can be configured explicitly — see [`env.example`](env.example) → `~/.config/usage-monitor/env`.
+API-key providers can be configured explicitly — see [`env.example`](env.example) → `~/.config/usage-monitor/env`. The custom-endpoint row is a catch-all for any local gateway or dashboard that exposes one JSON number: set `CUSTOM_USAGE_URL`, point `CUSTOM_USAGE_PATH` at a nested field holding either a 0–100 percentage or a `{"used", "total"}` pair, and it renders like any built-in subscription.
 
 ## Privacy & security
 

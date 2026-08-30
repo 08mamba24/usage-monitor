@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 import providers
 
@@ -100,6 +101,62 @@ class GrokCreditsMappingTests(unittest.TestCase):
         }
         _, entry = providers.grok_cred_slot(auth)
         self.assertEqual(entry["key"], "oidc-token")
+
+
+class CustomEndpointTests(unittest.TestCase):
+    """CUSTOM_USAGE_URL 通用接口: 数字当百分比, used/total 换算, 缺配置隐藏。"""
+
+    def _env(self, extra=None):
+        base = {"CUSTOM_USAGE_URL": "https://gw.local/api/usage"}
+        base.update(extra or {})
+        return base
+
+    def test_no_url_configured_is_hidden(self):
+        with mock.patch.object(providers, "ENV", {}):
+            self.assertEqual(providers.p_custom()["kind"], "missing")
+
+    def test_nested_number_is_percentage(self):
+        with mock.patch.object(providers, "ENV", self._env(
+                {"CUSTOM_USAGE_PATH": "data.percent", "CUSTOM_NAME": "OneAPI"})), \
+             mock.patch.object(providers, "http_json",
+                               return_value={"data": {"percent": 37.5}}):
+            r = providers.p_custom()
+        self.assertEqual(r["name"], "OneAPI")
+        self.assertEqual(r["pct"], 38)
+        self.assertEqual(r["wins"][0]["label"], "api")
+        self.assertTrue(r["ok"])
+
+    def test_used_total_dict_is_converted(self):
+        with mock.patch.object(providers, "ENV", self._env(
+                {"CUSTOM_USAGE_PATH": "quota"})), \
+             mock.patch.object(providers, "http_json",
+                               return_value={"quota": {"used": 30, "total": 200}}):
+            r = providers.p_custom()
+        self.assertEqual(r["pct"], 15)
+        self.assertIn("30 / 200", r["detail"])
+
+    def test_zero_total_is_not_ok(self):
+        with mock.patch.object(providers, "ENV", self._env()), \
+             mock.patch.object(providers, "http_json",
+                               return_value={"pct": {"used": 0, "total": 0}}):
+            r = providers.p_custom()
+        self.assertFalse(r["ok"])
+
+    def test_missing_path_is_error_row(self):
+        with mock.patch.object(providers, "ENV", self._env(
+                {"CUSTOM_USAGE_PATH": "nope.deep"})), \
+             mock.patch.object(providers, "http_json", return_value={"data": 5}):
+            r = providers.p_custom()
+        self.assertEqual(r["detail"], "err: KeyError")
+
+    def test_bearer_token_is_sent_when_configured(self):
+        with mock.patch.object(providers, "ENV", self._env(
+                {"CUSTOM_USAGE_TOKEN": "sk-test"})), \
+             mock.patch.object(providers, "http_json",
+                               return_value={"pct": 10}) as hj:
+            providers.p_custom()
+            headers = hj.call_args[0][1]
+        self.assertEqual(headers["Authorization"], "Bearer sk-test")
 
 
 if __name__ == "__main__":

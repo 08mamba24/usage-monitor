@@ -494,6 +494,47 @@ def p_grok():
     return grok_from_credits(billing, settings)
 
 
+# ── custom: 任意本地/自建查询接口 ────────────────────────────────────────────
+
+def custom_field(d, path):
+    """按 a.b.c 点路径取嵌套字段; 路径不存在抛 KeyError → err 行"""
+    node = d
+    for part in path.split("."):
+        node = node[part]
+    return node
+
+
+@provider("custom", "Custom")
+def p_custom():
+    """通用用量接口, env 配置驱动 (本地网关 one-api/new-api、自建面板均可):
+
+      CUSTOM_USAGE_URL=https://one-api.local/api/usage
+      CUSTOM_USAGE_TOKEN=sk-xxx        # 可选 → Bearer
+      CUSTOM_USAGE_PATH=data.percent   # 数字 0-100 直接当百分比;
+                                      # 或 {"used":u,"total":t} 自动换算
+      CUSTOM_NAME=OneAPI               # 可选显示名
+      CUSTOM_LABEL=mo                  # 可选窗口标签, 默认 api
+    """
+    url = ENV.get("CUSTOM_USAGE_URL")
+    if not url:
+        raise MissingCred("set CUSTOM_USAGE_URL in env")
+    headers = ({"Authorization": f"Bearer {ENV['CUSTOM_USAGE_TOKEN']}"}
+               if ENV.get("CUSTOM_USAGE_TOKEN") else None)
+    val = custom_field(http_json(url, headers),
+                       ENV.get("CUSTOM_USAGE_PATH") or "pct")
+    name = ENV.get("CUSTOM_NAME") or "Custom"
+    label = ENV.get("CUSTOM_LABEL") or "api"
+    if isinstance(val, dict):
+        total = val.get("total")
+        if not total:
+            return row("custom", name, detail="custom: total is 0/missing")
+        used = val.get("used") or 0
+        return pct_row("custom", name, min(used / total * 100, 100), None,
+                       f"{used} / {total}", main_label=label)
+    return pct_row("custom", name, max(min(float(val), 100), 0), None,
+                   main_label=label)
+
+
 def _gemini_clients():
     """返回 [(client_id, client_secret), ...] 候选列表, 运行时从本机 agy (Antigravity CLI,
     gemini-cli 2026-06-18 停服后的继任者) 优先, 回退旧 gemini-cli node 包。
@@ -573,7 +614,8 @@ def p_gemini():
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
-_ORDER = ["claude", "codex", "grok", "glm", "minimax", "gemini", "deepseek"]
+_ORDER = ["claude", "codex", "grok", "glm", "minimax", "gemini", "deepseek",
+          "custom"]
 
 
 def collect():
