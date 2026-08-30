@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import urllib.parse
 import urllib.request
 
@@ -82,6 +83,17 @@ def keychain(service):
     if not out:
         raise MissingCred(f"no keychain: {service}")
     return json.loads(out)
+
+
+def claude_oauth():
+    """Claude Code 凭据按平台取: macOS 钥匙串, Windows/Linux 读
+    ~/.claude/.credentials.json (claude login 落盘, 结构同 keychain 条目)。"""
+    if sys.platform == "darwin":
+        return keychain("Claude Code-credentials")["claudeAiOauth"]
+    d = _json_file("~/.claude/.credentials.json")
+    if d.get("claudeAiOauth"):
+        return d["claudeAiOauth"]
+    raise MissingCred("claude login once")
 
 
 # ── 传输层 ───────────────────────────────────────────────────────────────────
@@ -232,7 +244,7 @@ def p_deepseek():
 
 @provider("claude", "Claude")
 def p_claude():
-    kc = keychain("Claude Code-credentials")["claudeAiOauth"]
+    kc = claude_oauth()
     d = http_json("https://api.anthropic.com/api/oauth/usage",
                   {"Authorization": f"Bearer {kc['accessToken']}",
                    "anthropic-beta": "oauth-2025-04-20",
@@ -561,17 +573,22 @@ def p_gemini():
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
-def main():
+_ORDER = ["claude", "codex", "grok", "glm", "minimax", "gemini", "deepseek"]
+
+
+def collect():
+    """聚合所有 provider → payload dict (Swift 面板走 stdout, Windows 悬浮窗直接调用)。"""
     with cf.ThreadPoolExecutor(len(PROVIDERS)) as ex:
         out = list(ex.map(lambda p: p(), PROVIDERS))
     # 本机没配凭据的订阅直接隐藏 (面板自适应); 真实错误仍显示
     out = [r for r in out if r["kind"] != "missing"]
-    order = ["claude", "codex", "grok", "glm", "minimax", "gemini", "deepseek"]
-    out.sort(key=lambda r: order.index(r["id"]) if r["id"] in order else 99)
-    payload = json.dumps({
-        "updated": datetime.datetime.now().strftime("%H:%M"),
-        "providers": out,
-    }, ensure_ascii=False)
+    out.sort(key=lambda r: _ORDER.index(r["id"]) if r["id"] in _ORDER else 99)
+    return {"updated": datetime.datetime.now().strftime("%H:%M"),
+            "providers": out}
+
+
+def main():
+    payload = json.dumps(collect(), ensure_ascii=False)
     print(payload)
     # 同步写缓存，供 bridge /usage 端点（手表）读取
     try:

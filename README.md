@@ -36,11 +36,22 @@ git clone https://github.com/08mamba24/usage-monitor && cd usage-monitor
 
 Requirements: macOS 13+, Xcode Command Line Tools (`xcode-select --install`). No other dependencies — plain `swiftc` + system Python 3.
 
+## Windows
+
+A plain-Python compact alternative ships in the same repo: a draggable always-on-top strip — short name + usage + thin progress bar per provider, same pace colors as the macOS panel.
+
+```powershell
+git clone https://github.com/08mamba24/usage-monitor && cd usage-monitor
+python win_monitor.py
+```
+
+Requirements: Windows 10/11 + Python 3.9+ from python.org (tkinter included, no third-party packages). Claude credentials come from `~/.claude/.credentials.json` (`claude login`); every other provider reads the same credential files as on macOS once the respective CLIs are installed and logged in. Hover a cell for details, drag to move (position is remembered), right-click to refresh or quit; auto-refreshes every 5 minutes. Cross-platform logic is unit-tested and runs on a real Windows runner via GitHub Actions (`.github/workflows/windows.yml`).
+
 ## Providers & credential sources
 
 | Provider | Shows | Credentials from |
 |---|---|---|
-| Claude (Max/Pro) | 5h + 7d windows, plan & tier | macOS Keychain (Claude Code login) |
+| Claude (Max/Pro) | 5h + 7d windows, plan & tier | macOS: Keychain (Claude Code login) · Windows/Linux: `~/.claude/.credentials.json` |
 | Codex (ChatGPT) | 5h/monthly + 7d windows, plan | `~/.codex/auth.json`, auto-refreshed |
 | Grok (SuperGrok / Heavy) | weekly/monthly credits, plan | `~/.grok/auth.json`, auto-refreshed |
 | Gemini (Code Assist) | quota used | `~/.gemini/oauth_creds.json`, auto-refreshed |

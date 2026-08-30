@@ -1,0 +1,28 @@
+name: windows
+
+# Windows 适配验证: 单元测试(跨平台逻辑) + tkinter 冒烟 + 悬浮窗导入冒烟。
+# macOS 侧测试由本地跑 (tests/main.swift 需 Swift 编译, 不在本 workflow 范围)。
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Unit tests (providers + win_monitor logic)
+        run: python -m unittest tests.test_providers tests.test_win_monitor -v
+
+      - name: Tkinter smoke (runner 有桌面会话)
+        run: python -c "import tkinter; t = tkinter.Tk(); t.destroy(); print('tkinter ok')"
+
+      - name: Windows UI module smoke
+        run: python -c "import win_monitor; r = win_monitor.ui_row({'id': 'claude', 'name': 'Claude', 'kind': 'percent', 'ok': True, 'pct': 12.4, 'value': '5h 12%', 'detail': ''}); assert r['name'] == 'Ant' and r['text'] == '12%'; print('win_monitor ok')"
