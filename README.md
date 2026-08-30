@@ -1,6 +1,6 @@
 # usage-monitor
 
-A native macOS always-on-top monitor showing usage across your AI subscriptions — Claude, Codex, Gemini, GLM, MiniMax, DeepSeek — in one glance. On notched MacBooks, compact meters occupy the otherwise-unused menu-bar space immediately beside the camera.
+A native macOS always-on-top monitor showing usage across your AI subscriptions — Claude, Codex, Grok, Gemini, GLM, MiniMax, DeepSeek — in one glance. On notched MacBooks, compact meters occupy the otherwise-unused menu-bar space immediately beside the camera.
 
 | List mode | Ring mode |
 |---|---|
@@ -15,12 +15,12 @@ Figuring out *"which AI should I use right now"* shouldn't be a query task — i
 - **Ambient, not an app.** Always-on-top vibrancy panel, no Dock icon, never steals focus, auto-refreshes, remembers its position and view mode. All chrome (title, clock, buttons) stays hidden until you hover — at rest it's nothing but the data. Like the menu-bar clock: always there, always current, never managed.
 - **Zero maintenance.** Credentials are reused from the CLIs you already log into; expired OAuth tokens refresh themselves. Install it, then forget it exists — except for the colors.
 
-**Six subscriptions, one glance, zero maintenance.**
+**Seven subscriptions, one glance, zero maintenance.**
 
 ## Features
 
-- **Zero config**: reuses credentials your CLIs already saved (Claude Code keychain, `~/.codex/auth.json`, `~/.gemini/oauth_creds.json`, opencode/hermes auth files). Providers without credentials are hidden automatically.
-- **Self-healing OAuth**: expired Codex / Gemini access tokens are silently refreshed via their refresh tokens and written back — no more re-running CLIs just to query usage.
+- **Zero config**: reuses credentials your CLIs already saved (Claude Code keychain, `~/.codex/auth.json`, `~/.grok/auth.json`, `~/.gemini/oauth_creds.json`, opencode/hermes auth files). Providers without credentials are hidden automatically.
+- **Self-healing OAuth**: expired Codex / Grok / Gemini access tokens are silently refreshed via their refresh tokens and written back — no more re-running CLIs just to query usage.
 - **Pace coloring**: window color reflects burn rate vs. reset time (green = sustainable … red = will exhaust before reset), same algorithm as the Claude Code statusline.
 - **Three complementary views**, deliberately different: the **list** carries the numbers (exact percentages, reset countdowns, plan & quota fine print); the **ring strip** is a compact single-row, pure-graphic glance at your chosen 4 providers — arcs and pace colors only (outer = 5h window, inner = 7d/weekly, smallest = monthly MCP quota), hover for details; the **bar strip** mirrors the ring strip with stacked horizontal meters instead of arcs. Cycle them with the view-toggle button (`◔` list → `▤` ring → `☰` bar), and pick which providers fill the compact strips via the `⚙` menu (up to 4, Reset Default to restore); mode and window position persist.
 - **Hover-only chrome**: at rest the panel is just rings/rows; hovering grows a title bar out of the top edge (content never moves) with the clock, the view-toggle (`◔` list → `▤` ring → `☰` bar), a `⚙` provider picker, refresh `↻`, and `✕` to hide the panel — it retracts when the mouse leaves. The app never quits on its own: `✕` only hides, and a small **menu-bar gauge** toggles the panel back; the launchd agent self-heals across crashes and logout.
@@ -42,6 +42,7 @@ Requirements: macOS 13+, Xcode Command Line Tools (`xcode-select --install`). No
 |---|---|---|
 | Claude (Max/Pro) | 5h + 7d windows, plan & tier | macOS Keychain (Claude Code login) |
 | Codex (ChatGPT) | 5h/monthly + 7d windows, plan | `~/.codex/auth.json`, auto-refreshed |
+| Grok (SuperGrok / Heavy) | weekly/monthly credits, plan | `~/.grok/auth.json`, auto-refreshed |
 | Gemini (Code Assist) | quota used | `~/.gemini/oauth_creds.json`, auto-refreshed |
 | GLM (z.ai coding plan) | 5h window, monthly MCP quota | `GLM_API_KEY` / opencode / hermes |
 | MiniMax coding plan | 5h + weekly windows | `MINIMAX_API_KEY` / opencode / hermes |

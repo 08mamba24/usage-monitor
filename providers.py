@@ -349,6 +349,139 @@ def p_codex():
                    main_window_ms=pwin_ms)
 
 
+# grok CLI 公开 OIDC token 端点 (issuer https://auth.x.ai well-known)
+_GROK_TOKEN = "https://auth.x.ai/oauth2/token"
+_GROK_BILLING = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
+_GROK_SETTINGS = "https://cli-chat-proxy.grok.com/v1/settings"
+
+
+def grok_home():
+    return os.path.expanduser(os.environ.get("GROK_HOME") or "~/.grok")
+
+
+def grok_cred_slot(auth):
+    """优先 https://auth.x.ai::<client-id> 的 grok login 槽; 否则退第一条带 key 的。"""
+    slots = [(k, v) for k, v in (auth or {}).items()
+             if isinstance(v, dict) and v.get("key")]
+    if not slots:
+        raise MissingCred("run grok login once")
+    preferred = [s for s in slots if str(s[0]).startswith("https://auth.x.ai::")]
+    return (preferred or slots)[0]
+
+
+def grok_plan_name(raw):
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    token = "".join(c for c in s.lower() if c.isalpha())
+    if token in ("supergrokheavy", "heavy"):
+        return "SuperGrok Heavy"
+    if token == "supergrok":
+        return "SuperGrok"
+    return s
+
+
+def grok_from_credits(billing, settings=None):
+    """CLI-proxy credits JSON → 统一 pct_row。对应 Grok Build /usage 的 Usage limit。
+
+    主窗口按 currentPeriod 长度标 7d/mo, 不是 5h。percent 缺省但有周期 → 0%
+    (SuperGrok Heavy 刚重置时 billing 会省略 creditUsagePercent)。
+    """
+    cfg = (billing or {}).get("config") or {}
+    period = cfg.get("currentPeriod") or {}
+    start = period.get("start") or cfg.get("billingPeriodStart")
+    end = period.get("end") or cfg.get("billingPeriodEnd")
+    used = cfg.get("creditUsagePercent")
+    if used is None:
+        cap = (cfg.get("onDemandCap") or {}).get("val") or 0
+        od = (cfg.get("onDemandUsed") or {}).get("val")
+        if cap > 0 and od is not None:
+            used = od / cap * 100
+        elif end:
+            used = 0
+        else:
+            return row("grok", "Grok", detail="no quota data")
+    window_ms = WEEK
+    if start and end:
+        try:
+            a = datetime.datetime.fromisoformat(start.replace("Z", "+00:00"))
+            b = datetime.datetime.fromisoformat(end.replace("Z", "+00:00"))
+            window_ms = max((b - a).total_seconds() * 1000, 1)
+        except Exception:
+            window_ms = WEEK
+    plan = (grok_plan_name((settings or {}).get("subscription_tier_display"))
+            or grok_plan_name(cfg.get("subscriptionTier"))
+            or grok_plan_name((billing or {}).get("subscriptionTier")))
+    return pct_row("grok", "Grok", used,
+                   ms_left_iso(end) if end else None, plan,
+                   main_label=window_label(window_ms / 1000),
+                   main_window_ms=window_ms)
+
+
+def grok_headers(token):
+    return {"Authorization": f"Bearer {token}",
+            "x-xai-token-auth": "xai-grok-cli",
+            "Accept": "application/json"}
+
+
+def grok_refresh(auth, slot, path):
+    """临期则 OIDC refresh_token 换新并回写 ~/.grok/auth.json (与 grok CLI 共用)。"""
+    key, entry = slot
+    token = entry.get("key")
+    exp = 0
+    if entry.get("expires_at"):
+        try:
+            exp = datetime.datetime.fromisoformat(
+                entry["expires_at"].replace("Z", "+00:00")).timestamp()
+        except Exception:
+            exp = 0
+    if not exp and token:
+        exp = jwt_exp(token)
+    now = datetime.datetime.now(datetime.timezone.utc).timestamp()
+    if token and exp > now + 60:
+        return token
+    rt, cid = entry.get("refresh_token"), entry.get("oidc_client_id")
+    if not rt or not cid:
+        raise MissingCred("grok re-login needed")
+    try:
+        tok = http_json(_GROK_TOKEN,
+                        {"Content-Type": "application/x-www-form-urlencoded"},
+                        data=urllib.parse.urlencode({
+                            "grant_type": "refresh_token",
+                            "refresh_token": rt,
+                            "client_id": cid,
+                        }).encode())
+    except Exception:
+        raise MissingCred("grok re-login needed")
+    if not tok.get("access_token"):
+        raise MissingCred("grok re-login needed")
+    entry["key"] = tok["access_token"]
+    if tok.get("refresh_token"):
+        entry["refresh_token"] = tok["refresh_token"]
+    ttl = tok.get("expires_in") or 6 * 3600
+    entry["expires_at"] = datetime.datetime.fromtimestamp(
+        now + ttl, datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    auth[key] = entry
+    json.dump(auth, open(path, "w"), indent=2)
+    return entry["key"]
+
+
+@provider("grok", "Grok")
+def p_grok():
+    path = os.path.join(grok_home(), "auth.json")
+    auth = _json_file(path)
+    token = grok_refresh(auth, grok_cred_slot(auth), path)
+    headers = grok_headers(token)
+    billing = http_json(_GROK_BILLING, headers)
+    try:
+        settings = http_json(_GROK_SETTINGS, headers)
+    except Exception:
+        settings = {}
+    return grok_from_credits(billing, settings)
+
+
 def _gemini_clients():
     """返回 [(client_id, client_secret), ...] 候选列表, 运行时从本机 agy (Antigravity CLI,
     gemini-cli 2026-06-18 停服后的继任者) 优先, 回退旧 gemini-cli node 包。
@@ -433,7 +566,7 @@ def main():
         out = list(ex.map(lambda p: p(), PROVIDERS))
     # 本机没配凭据的订阅直接隐藏 (面板自适应); 真实错误仍显示
     out = [r for r in out if r["kind"] != "missing"]
-    order = ["claude", "codex", "glm", "minimax", "gemini", "deepseek"]
+    order = ["claude", "codex", "grok", "glm", "minimax", "gemini", "deepseek"]
     out.sort(key=lambda r: order.index(r["id"]) if r["id"] in order else 99)
     payload = json.dumps({
         "updated": datetime.datetime.now().strftime("%H:%M"),
