@@ -227,14 +227,12 @@ final class RowView: NSView {
 
 // ── 迷你圆环视图：外环=5h 主窗口，内环=7d/wk；MCP 用虚线内环 ──────────────
 final class MiniRingView: NSView {
-    // 画布 22→28，线宽/内缩与原来相同 → 半径差 4.9、圈缝 2.3 不变，
-    // 多出来的空间给中心字母。刘海翼高 32 − 上下各 2pt，28 刚好铺满。
     enum Metrics {
-        static let size: CGFloat = 28
+        static let size: CGFloat = 22
         static let outerWidth: CGFloat = 3.2
         static let innerWidth: CGFloat = 2
         static let innerInset: CGFloat = 5.5
-        static let labelSize: CGFloat = 10
+        static let labelSize: CGFloat = 6.5
     }
     struct Arc {
         let frac: CGFloat
