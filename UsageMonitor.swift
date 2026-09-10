@@ -227,14 +227,14 @@ final class RowView: NSView {
 
 // ── 迷你圆环视图：外环=5h 主窗口，内环=7d/wk；MCP 用虚线内环 ──────────────
 final class MiniRingView: NSView {
-    // 28 刚好填满刘海翼 (auxiliary 高 32 − 上下各 2pt)。外环贴边、内环外移，
-    // 两圈加粗后中间只留字母孔，看起来更满。
+    // 画布 22→28，线宽/内缩与原来相同 → 半径差 4.9、圈缝 2.3 不变，
+    // 多出来的空间给中心字母。刘海翼高 32 − 上下各 2pt，28 刚好铺满。
     enum Metrics {
         static let size: CGFloat = 28
-        static let outerWidth: CGFloat = 4.6
-        static let innerWidth: CGFloat = 3.6
-        static let innerInset: CGFloat = 5.4
-        static let labelSize: CGFloat = 7
+        static let outerWidth: CGFloat = 3.2
+        static let innerWidth: CGFloat = 2
+        static let innerInset: CGFloat = 5.5
+        static let labelSize: CGFloat = 10
     }
     struct Arc {
         let frac: CGFloat
@@ -254,7 +254,7 @@ final class MiniRingView: NSView {
             track.appendArc(withCenter: c, radius: r, startAngle: 0, endAngle: 360)
             track.lineWidth = a.width
             if a.dashed {
-                var dash: [CGFloat] = [2.2, 2.8]
+                var dash: [CGFloat] = [1.6, 2.1]
                 track.setLineDash(&dash, count: dash.count, phase: 0)
             }
             NSColor.quaternaryLabelColor.setStroke()
@@ -266,7 +266,7 @@ final class MiniRingView: NSView {
             p.lineWidth = a.width
             p.lineCapStyle = .round
             if a.dashed {
-                var dash: [CGFloat] = [2.2, 2.8]
+                var dash: [CGFloat] = [1.6, 2.1]
                 p.setLineDash(&dash, count: dash.count, phase: 0)
             }
             a.color.setStroke()
