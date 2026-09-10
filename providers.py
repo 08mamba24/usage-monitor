@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import urllib.parse
 import urllib.request
 
@@ -317,10 +318,19 @@ def p_minimax():
 
 # codex CLI 的公开 OAuth client (官方源码 login/src/auth/manager.rs)
 _CODEX_CLIENT = "app_EMoamEEZ73f0CkXaXp7hrann"
+_codex_usage_lock = threading.Lock()
+_codex_usage_cache = None  # ("ok", dict) | ("err", Exception)
 
 
-@provider("codex", "Codex")
-def p_codex():
+def clear_codex_usage_cache():
+    """Drop the per-process Codex/Spark usage cache (tests + a fresh refresh)."""
+    global _codex_usage_cache
+    with _codex_usage_lock:
+        _codex_usage_cache = None
+
+
+def fetch_codex_usage():
+    """Read ~/.codex/auth.json, refresh the JWT if needed, GET wham/usage."""
     path = os.path.expanduser("~/.codex/auth.json")
     auth = _json_file(path)
     tokens = auth.get("tokens") or {}
@@ -342,23 +352,82 @@ def p_codex():
         auth["last_refresh"] = datetime.datetime.now(datetime.timezone.utc) \
             .isoformat().replace("+00:00", "Z")
         json.dump(auth, open(path, "w"), indent=2)
-    d = http_json("https://chatgpt.com/backend-api/wham/usage",
-                  {"Authorization": f"Bearer {tokens['access_token']}",
-                   "ChatGPT-Account-Id": tokens.get("account_id", ""),
-                   "User-Agent": "codex-cli"})
-    rl = d.get("rate_limit") or {}
-    pw, sw = rl.get("primary_window") or {}, rl.get("secondary_window") or {}
+    return http_json("https://chatgpt.com/backend-api/wham/usage",
+                     {"Authorization": f"Bearer {tokens['access_token']}",
+                      "ChatGPT-Account-Id": tokens.get("account_id", ""),
+                      "User-Agent": "codex-cli"})
+
+
+def codex_usage():
+    """One wham/usage payload per process so Codex and Spark share the request."""
+    global _codex_usage_cache
+    with _codex_usage_lock:
+        if _codex_usage_cache is not None:
+            kind, val = _codex_usage_cache
+            if kind == "err":
+                raise val
+            return val
+        try:
+            val = fetch_codex_usage()
+            _codex_usage_cache = ("ok", val)
+            return val
+        except Exception as e:
+            _codex_usage_cache = ("err", e)
+            raise
+
+
+def rate_limit_row(pid, name, rl, plan=None, empty_detail="no data"):
+    """Map a Codex-style {primary_window, secondary_window} object to a percent row."""
+    pw, sw = (rl or {}).get("primary_window") or {}, (rl or {}).get("secondary_window") or {}
     if pw.get("used_percent") is None:
-        return row("codex", "Codex", detail=d.get("plan_type", "no data"))
+        return row(pid, name, detail=plan or empty_detail)
     pwin_ms = (pw.get("limit_window_seconds") or 5 * 3600) * 1000
     sleft = ms_left(sw["reset_at"] * 1000) if sw.get("reset_at") else None
-    return pct_row("codex", "Codex", pw["used_percent"],
+    sw_label = window_label(sw.get("limit_window_seconds")) if sw.get("limit_window_seconds") else "7d"
+    return pct_row(pid, name, pw["used_percent"],
                    ms_left(pw["reset_at"] * 1000) if pw.get("reset_at") else None,
-                   win("7d", sw.get("used_percent"), fmt_ms(sleft) if sleft else None,
+                   win(sw_label, sw.get("used_percent"), fmt_ms(sleft) if sleft else None,
                        left_ms=sleft, window_ms=WEEK),
-                   d.get("plan_type"),
+                   plan,
                    main_label=window_label(pw.get("limit_window_seconds")),
                    main_window_ms=pwin_ms)
+
+
+def is_spark_limit(item):
+    if not isinstance(item, dict):
+        return False
+    blob = " ".join(str(item.get(k) or "") for k in
+                    ("id", "limit_name", "name", "metered_feature", "normal_model_slug")).lower()
+    return "spark" in blob
+
+
+def spark_rate_limit(d):
+    """Spark's pool lives in additional_rate_limits, not rate_limit.primary/secondary."""
+    for item in d.get("additional_rate_limits") or []:
+        if not is_spark_limit(item):
+            continue
+        rl = item.get("rate_limit")
+        return rl if isinstance(rl, dict) else item
+    return None
+
+
+@provider("codex", "Codex")
+def p_codex():
+    d = codex_usage()
+    return rate_limit_row("codex", "Codex", d.get("rate_limit") or {}, d.get("plan_type"))
+
+
+@provider("spark", "Spark")
+def p_spark():
+    rl = spark_rate_limit(codex_usage())
+    if not rl:
+        raise MissingCred("no spark quota")
+    pw, sw = rl.get("primary_window") or {}, rl.get("secondary_window") or {}
+    if pw.get("used_percent") is None:
+        if sw.get("used_percent") is None:
+            raise MissingCred("no spark quota")
+        rl = {"primary_window": sw, "secondary_window": {}}
+    return rate_limit_row("spark", "Spark", rl)
 
 
 # grok CLI 公开 OIDC token 端点 (issuer https://auth.x.ai well-known)
@@ -614,8 +683,8 @@ def p_gemini():
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
-_ORDER = ["claude", "codex", "grok", "glm", "minimax", "gemini", "deepseek",
-          "custom"]
+_ORDER = ["claude", "codex", "spark", "grok", "glm", "minimax", "gemini",
+          "deepseek", "custom"]
 
 
 def collect():

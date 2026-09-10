@@ -227,6 +227,15 @@ final class RowView: NSView {
 
 // ── 迷你圆环视图：外环=5h 主窗口，内环=7d/wk；MCP 用虚线内环 ──────────────
 final class MiniRingView: NSView {
+    // 28 刚好填满刘海翼 (auxiliary 高 32 − 上下各 2pt)。外环贴边、内环外移，
+    // 两圈加粗后中间只留字母孔，看起来更满。
+    enum Metrics {
+        static let size: CGFloat = 28
+        static let outerWidth: CGFloat = 4.6
+        static let innerWidth: CGFloat = 3.6
+        static let innerInset: CGFloat = 5.4
+        static let labelSize: CGFloat = 7
+    }
     struct Arc {
         let frac: CGFloat
         let color: NSColor
@@ -245,7 +254,7 @@ final class MiniRingView: NSView {
             track.appendArc(withCenter: c, radius: r, startAngle: 0, endAngle: 360)
             track.lineWidth = a.width
             if a.dashed {
-                var dash: [CGFloat] = [1.6, 2.1]
+                var dash: [CGFloat] = [2.2, 2.8]
                 track.setLineDash(&dash, count: dash.count, phase: 0)
             }
             NSColor.quaternaryLabelColor.setStroke()
@@ -257,7 +266,7 @@ final class MiniRingView: NSView {
             p.lineWidth = a.width
             p.lineCapStyle = .round
             if a.dashed {
-                var dash: [CGFloat] = [1.6, 2.1]
+                var dash: [CGFloat] = [2.2, 2.8]
                 p.setLineDash(&dash, count: dash.count, phase: 0)
             }
             a.color.setStroke()
@@ -265,7 +274,7 @@ final class MiniRingView: NSView {
         }
 
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 6.5, weight: .semibold),
+            .font: NSFont.systemFont(ofSize: Metrics.labelSize, weight: .semibold),
             .foregroundColor: NSColor.secondaryLabelColor
         ]
         let s = label as NSString
@@ -294,8 +303,8 @@ final class RingCell: NSView {
         NSLayoutConstraint.activate([
             ring.topAnchor.constraint(equalTo: topAnchor),
             ring.centerXAnchor.constraint(equalTo: centerXAnchor),
-            ring.widthAnchor.constraint(equalToConstant: 22),
-            ring.heightAnchor.constraint(equalToConstant: 22),
+            ring.widthAnchor.constraint(equalToConstant: MiniRingView.Metrics.size),
+            ring.heightAnchor.constraint(equalToConstant: MiniRingView.Metrics.size),
             ring.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
@@ -357,19 +366,24 @@ final class RingCell: NSView {
         hoverText = ""
         toolTip = "\(p.name)  \(p.value)" + (p.detail.isEmpty ? "" : " · \(p.detail)")
         guard p.ok, let w = p.wins?.first else {
-            ring.arcs = [MiniRingView.Arc(frac: 0, color: .clear, width: 3.2, inset: 0, dashed: false)]
+            ring.arcs = [MiniRingView.Arc(frac: 0, color: .clear,
+                                          width: MiniRingView.Metrics.outerWidth,
+                                          inset: 0, dashed: false)]
             ring.label = normalLabel
             return
         }
         var hoverRows = [winAbbrev(w)]
         var arcs = [MiniRingView.Arc(frac: w.pct / 100,
                                      color: p.toneColor ?? pctColor(w.pct),
-                                     width: 3.2, inset: 0, dashed: false)]
+                                     width: MiniRingView.Metrics.outerWidth,
+                                     inset: 0, dashed: false)]
         if let w2 = (p.wins ?? []).dropFirst().first {
             let quota = w2.label.hasPrefix("MCP")
             let color = (paceColor(w2.tone) ?? pctColor(w2.pct)).withAlphaComponent(quota ? 0.6 : 0.75)
             arcs.append(MiniRingView.Arc(frac: w2.pct / 100, color: color,
-                                         width: 2, inset: 5.5, dashed: quota))
+                                         width: MiniRingView.Metrics.innerWidth,
+                                         inset: MiniRingView.Metrics.innerInset,
+                                         dashed: quota))
             hoverRows.append(winAbbrev(w2))
         }
         // 紧凑悬停框追加补充行 (如 Claude 的美元超额 $6.1k/20k)
@@ -419,6 +433,7 @@ final class RingCell: NSView {
         switch p.id {
         case "claude": "A"
         case "codex": "O"
+        case "spark": "S"
         case "gemini": "G"
         case "glm": "Z"
         case "minimax": "M"

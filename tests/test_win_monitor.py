@@ -39,6 +39,7 @@ class CompactNameTests(unittest.TestCase):
 
     def test_others_keep_formal_name(self):
         self.assertEqual(win_monitor.compact("codex", "Codex"), "Codex")
+        self.assertEqual(win_monitor.compact("spark", "Spark"), "Spark")
         self.assertEqual(win_monitor.compact("grok", "Grok"), "Grok")
 
 

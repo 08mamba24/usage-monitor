@@ -1,6 +1,6 @@
 # usage-monitor
 
-A native macOS always-on-top monitor showing usage across your AI subscriptions — Claude, Codex, Grok, Gemini, GLM, MiniMax, DeepSeek — in one glance. On notched MacBooks, compact meters occupy the otherwise-unused menu-bar space immediately beside the camera.
+A native macOS always-on-top monitor showing usage across your AI subscriptions — Claude, Codex, Spark, Grok, Gemini, GLM, MiniMax, DeepSeek — in one glance. On notched MacBooks, compact meters occupy the otherwise-unused menu-bar space immediately beside the camera.
 
 | List mode | Ring mode |
 |---|---|
@@ -15,7 +15,7 @@ Figuring out *"which AI should I use right now"* shouldn't be a query task — i
 - **Ambient, not an app.** Always-on-top vibrancy panel, no Dock icon, never steals focus, auto-refreshes, remembers its position and view mode. All chrome (title, clock, buttons) stays hidden until you hover — at rest it's nothing but the data. Like the menu-bar clock: always there, always current, never managed.
 - **Zero maintenance.** Credentials are reused from the CLIs you already log into; expired OAuth tokens refresh themselves. Install it, then forget it exists — except for the colors.
 
-**Seven subscriptions, one glance, zero maintenance.**
+**Eight subscriptions, one glance, zero maintenance.**
 
 ## Features
 
@@ -53,6 +53,7 @@ Requirements: Windows 10/11 + Python 3.9+ from python.org (tkinter included, no 
 |---|---|---|
 | Claude (Max/Pro) | 5h + 7d windows, plan & tier | macOS: Keychain (Claude Code login) · Windows/Linux: `~/.claude/.credentials.json` |
 | Codex (ChatGPT) | 5h/monthly + 7d windows, plan | `~/.codex/auth.json`, auto-refreshed |
+| Spark (Codex-Spark) | 5h + 7d windows, separate pool from Codex | same `~/.codex/auth.json`; hidden if the plan has no Spark quota |
 | Grok (SuperGrok / Heavy) | weekly/monthly credits, plan | `~/.grok/auth.json`, auto-refreshed |
 | Gemini (Code Assist) | quota used | `~/.gemini/oauth_creds.json`, auto-refreshed |
 | GLM (z.ai coding plan) | 5h window, monthly MCP quota | `GLM_API_KEY` / opencode / hermes |

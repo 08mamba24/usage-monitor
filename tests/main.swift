@@ -97,6 +97,31 @@ guard notchDetailSecondary(compactCodex).leading == "7d 4% 6d" else {
     exit(1)
 }
 
+let compactSpark = Provider(
+    id: "spark", name: "Spark", kind: "percent", ok: true,
+    pct: 15, value: "5h 15% /2.5h", detail: "7d 7% /6d",
+    tone: nil, wins: nil, cval: nil)
+guard notchCompactName(compactSpark) == "Spark" else {
+    fputs("FAIL: compact Spark name should stay Spark\n", stderr)
+    exit(1)
+}
+guard notchDetailSecondary(compactSpark).leading == "7d 7% 6d" else {
+    fputs("FAIL: compact Spark reset time should not include a slash\n", stderr)
+    exit(1)
+}
+
+let ringProbe = RingCell(frame: .zero)
+ringProbe.translatesAutoresizingMaskIntoConstraints = false
+ringProbe.layoutSubtreeIfNeeded()
+guard ringProbe.fittingSize.height == MiniRingView.Metrics.size else {
+    fputs(
+        "FAIL: ring cell height should match MiniRingView.Metrics.size " +
+        "(got \(ringProbe.fittingSize.height))\n",
+        stderr
+    )
+    exit(1)
+}
+
 let initialWindowCount = NSApplication.shared.windows.count
 let subject = App()
 let createdWindowCount = NSApplication.shared.windows.count - initialWindowCount

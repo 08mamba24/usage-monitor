@@ -159,5 +159,137 @@ class CustomEndpointTests(unittest.TestCase):
         self.assertEqual(headers["Authorization"], "Bearer sk-test")
 
 
+class CodexSparkPoolTests(unittest.TestCase):
+    """Spark is a separate quota pool on the same wham/usage payload."""
+
+    WHAM = {
+        "plan_type": "prolite",
+        "rate_limit": {
+            "primary_window": {
+                "used_percent": 51,
+                "limit_window_seconds": 604800,
+                "reset_at": 1789437107,
+            },
+            "secondary_window": None,
+        },
+        "additional_rate_limits": [{
+            "limit_name": "GPT-5.3-Codex-Spark",
+            "metered_feature": "codex_bengalfox",
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 15,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 1789046509,
+                },
+                "secondary_window": {
+                    "used_percent": 7,
+                    "limit_window_seconds": 604800,
+                    "reset_at": 1789633309,
+                },
+            },
+        }],
+    }
+
+    def setUp(self):
+        providers.clear_codex_usage_cache()
+
+    def tearDown(self):
+        providers.clear_codex_usage_cache()
+
+    def test_spark_row_is_not_the_codex_row(self):
+        with mock.patch.object(providers, "fetch_codex_usage", return_value=self.WHAM):
+            spark = providers.p_spark()
+            codex = providers.p_codex()
+        self.assertEqual(spark["id"], "spark")
+        self.assertEqual(spark["name"], "Spark")
+        self.assertTrue(spark["ok"])
+        self.assertEqual(spark["pct"], 15)
+        self.assertEqual(spark["wins"][0]["label"], "5h")
+        self.assertEqual(spark["wins"][1]["label"], "7d")
+        self.assertEqual(spark["wins"][1]["pct"], 7)
+        self.assertEqual(codex["id"], "codex")
+        self.assertEqual(codex["pct"], 51)
+        self.assertEqual(codex["wins"][0]["label"], "7d")
+        self.assertNotEqual(spark["pct"], codex["pct"])
+
+    def test_codex_and_spark_share_one_fetch(self):
+        with mock.patch.object(providers, "fetch_codex_usage",
+                               return_value=self.WHAM) as fetch:
+            providers.p_codex()
+            providers.p_spark()
+        self.assertEqual(fetch.call_count, 1)
+
+    def test_missing_spark_quota_is_hidden(self):
+        d = {"plan_type": "plus", "rate_limit": {"primary_window": {"used_percent": 1}},
+             "additional_rate_limits": []}
+        with mock.patch.object(providers, "fetch_codex_usage", return_value=d):
+            r = providers.p_spark()
+        self.assertEqual(r["kind"], "missing")
+
+    def test_gpt_reserve_is_not_spark(self):
+        d = {
+            "plan_type": "prolite",
+            "rate_limit": {"primary_window": {"used_percent": 1}},
+            "additional_rate_limits": [{
+                "limit_name": "gpt-reserve",
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 3,
+                        "limit_window_seconds": 18000,
+                    },
+                },
+            }],
+        }
+        with mock.patch.object(providers, "fetch_codex_usage", return_value=d):
+            r = providers.p_spark()
+        self.assertEqual(r["kind"], "missing")
+
+    def test_flattened_spark_windows_without_nested_rate_limit(self):
+        d = {
+            "plan_type": "prolite",
+            "rate_limit": {"primary_window": {"used_percent": 1}},
+            "additional_rate_limits": [{
+                "id": "codex-spark",
+                "name": "GPT-5.3-Codex-Spark",
+                "primary_window": {
+                    "used_percent": 12,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 1789046509,
+                },
+                "secondary_window": {
+                    "used_percent": 8,
+                    "limit_window_seconds": 604800,
+                    "reset_at": 1789633309,
+                },
+            }],
+        }
+        with mock.patch.object(providers, "fetch_codex_usage", return_value=d):
+            r = providers.p_spark()
+        self.assertEqual(r["pct"], 12)
+        self.assertEqual(r["wins"][1]["pct"], 8)
+
+    def test_spark_weekly_only_promotes_to_main(self):
+        d = {
+            "plan_type": "prolite",
+            "rate_limit": {"primary_window": {"used_percent": 1}},
+            "additional_rate_limits": [{
+                "limit_name": "GPT-5.3-Codex-Spark",
+                "rate_limit": {
+                    "primary_window": None,
+                    "secondary_window": {
+                        "used_percent": 9,
+                        "limit_window_seconds": 604800,
+                        "reset_at": 1789633309,
+                    },
+                },
+            }],
+        }
+        with mock.patch.object(providers, "fetch_codex_usage", return_value=d):
+            r = providers.p_spark()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["pct"], 9)
+        self.assertEqual(r["wins"][0]["label"], "7d")
+
+
 if __name__ == "__main__":
     unittest.main()
