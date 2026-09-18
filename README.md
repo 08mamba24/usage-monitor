@@ -1,6 +1,6 @@
 # usage-monitor
 
-A native macOS always-on-top monitor showing usage across your AI subscriptions — Claude, Codex, Spark, Grok, Gemini, GLM, MiniMax, DeepSeek — in one glance. On notched MacBooks, compact meters occupy the otherwise-unused menu-bar space immediately beside the camera.
+A native macOS always-on-top monitor showing usage across your AI subscriptions — Claude, Codex, Spark, Grok, Gemini, GLM, MiniMax, Qoder, DeepSeek — in one glance. On notched MacBooks, compact meters occupy the otherwise-unused menu-bar space immediately beside the camera.
 
 | List mode | Ring mode |
 |---|---|
@@ -58,6 +58,7 @@ Requirements: Windows 10/11 + Python 3.9+ from python.org (tkinter included, no 
 | Gemini (Code Assist) | quota used | `~/.gemini/oauth_creds.json`, auto-refreshed |
 | GLM (z.ai coding plan) | 5h window, monthly MCP quota | `GLM_API_KEY` / opencode / hermes |
 | MiniMax coding plan | 5h + weekly windows | `MINIMAX_API_KEY` / opencode / hermes |
+| Qoder (credits pool) | credits used %, plan expiry | `QODER_PAT` (Qoder → Settings → Integrations → Personal Access Token) |
 | DeepSeek (prepaid) | balance + today's spend | `DEEPSEEK_API_KEY` / opencode |
 | Custom endpoint | any percentage or used-vs-total | `CUSTOM_USAGE_URL` (+ optional token / path / name) → env |
 

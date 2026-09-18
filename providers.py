@@ -430,6 +430,123 @@ def p_spark():
     return rate_limit_row("spark", "Spark", rl)
 
 
+# ── qoder CLI (qodercn) ──────────────────────────────────────────────────────
+# 凭据是 PAT: qoder.com.cn → Account Settings → Integrations 生成 (官方文档
+# docs.qoder.com/cli/authentication), 与 CI 环境变量 QODER_PERSONAL_ACCESS_TOKEN 同源。
+# access_token 由 CLI 源码 (bundle 内 fetchQuotaUsage/exchangePersonalToken) 逆向:
+#   POST {openapi}/api/v1/jobToken/exchange {personal_token} → {token,refresh_token,expire_time}
+#   GET  {openapi}/api/v2/quota/usage  → userQuota{total,used,remaining,unit:credits}
+# CLI 自己的 ~/.qoder-cn/.auth/user 是 WASM 加密 blob 无法复用, 故 PAT 独立换 token。
+_QODER_OPENAPI = "https://openapi.qoder.com.cn"
+
+
+def qoder_pat():
+    """PAT 优先级: env 文件 QODER_PAT > 进程环境变量 (QODERCN_/QODER_PERSONAL_ACCESS_TOKEN)"""
+    if ENV.get("QODER_PAT"):
+        return ENV["QODER_PAT"]
+    for k in ("QODERCN_PERSONAL_ACCESS_TOKEN", "QODER_PERSONAL_ACCESS_TOKEN"):
+        if os.environ.get(k):
+            return os.environ[k]
+    raise MissingCred("qoder PAT: 生成后填入 env QODER_PAT")
+
+
+def _tok_exp(v, now):
+    """qoder token 有效期字段自适应 → epoch 秒。实测 exchange 响应给 ISO 字符串
+    (expires_at) 或毫秒时长 (expires_in=86400000=24h); 兼容 epoch 秒/毫秒与相对秒"""
+    if isinstance(v, str):
+        try:
+            return datetime.datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            pass
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return 0.0
+    if f < 1e4:
+        return now + f                 # 相对秒 (兜底)
+    if f < 1e9:
+        return now + f / 1000          # 相对毫秒 (qoder 实际格式)
+    return f / 1000 if f > 1e12 else f  # epoch 毫秒 / 秒
+
+
+def _save_state(key, val):
+    """重读-合并-写回, 避免覆盖其他 provider (day_spend) 刚写入的条目"""
+    s = _json_file(STATE)
+    s[key] = val
+    json.dump(s, open(STATE, "w"))
+
+
+def qoder_token(openapi):
+    """PAT → Bearer token; 缓存于 state.json, 临期先 refresh 失败再 exchange"""
+    now = datetime.datetime.now().timestamp()
+    s = _json_file(STATE)
+    e = s.get("qoder_token") or {}
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if e.get("token") and e.get("expire", 0) > now + 60:
+        return e["token"]
+    if e.get("refresh_token"):
+        try:
+            tok = http_json(f"{openapi}/api/v1/jobToken/refresh", headers,
+                            data=json.dumps({"refresh_token": e["refresh_token"]}).encode())
+            e = {"token": tok.get("token") or tok.get("access_token") or tok.get("device_token"),
+                 "refresh_token": tok.get("refresh_token") or e["refresh_token"],
+                 "expire": _tok_exp(tok.get("expire_time") or tok.get("expires_at")
+                                    or tok.get("expires_in"), now)}
+            if e["token"]:
+                _save_state("qoder_token", e)
+                return e["token"]
+        except Exception:
+            pass   # refresh 失败回退 exchange
+    tok = http_json(f"{openapi}/api/v1/jobToken/exchange", headers,
+                    data=json.dumps({"personal_token": qoder_pat()}).encode())
+    e = {"token": tok.get("token") or tok.get("access_token") or tok.get("device_token"),
+         "refresh_token": tok.get("refresh_token"),
+         "expire": _tok_exp(tok.get("expire_time") or tok.get("expires_at")
+                            or tok.get("expires_in"), now)}
+    if not e["token"]:
+        raise MissingCred("qoder PAT rejected")
+    _save_state("qoder_token", e)
+    return e["token"]
+
+
+def qoder_from_quota(d):
+    """quota/usage JSON → pct_row。credit 是消耗池非时间窗: 主值只报百分比,
+    套餐到期 (expiresAt) 与剩余量进 detail, 不参与 pace 配色。
+    资源包 (addOnQuota, 桌面端"资源包") 与主池合并算百分比 — 与官方
+    totalUsagePercentage 口径一致: (u+a)/(U+A); detail 按池拆分显示"""
+    q = d.get("user_quota") or d.get("userQuota") or {}
+    if not q.get("total"):
+        # 企业/共享池: shared_quota 用 cap 而非 total
+        q = (d.get("shared_quota") or d.get("sharedQuota")
+             or d.get("org_resource_package") or d.get("orgResourcePackage") or {})
+        q = {"total": q.get("cap") or q.get("total"), "used": q.get("used")}
+    total = q.get("total") or 0
+    used = q.get("used") or 0
+    if not total:
+        return row("qoder", "Qoder", detail="no quota data")
+    a = d.get("add_on_quota") or d.get("addOnQuota") or {}
+    a_total, a_used = a.get("total") or 0, a.get("used") or 0
+    expires = d.get("expiresAt") or d.get("expires_at")
+    left = ms_left(expires) if expires else None
+    left_txt = (f"{total - used:g}/{total:g} + {a_total - a_used:g}/{a_total:g} left"
+                if a_total else f"{total - used:g}/{total:g} left")
+    return pct_row("qoder", "Qoder", (used + a_used) * 100 / (total + a_total), None,
+                   left_txt,
+                   d.get("userType") or d.get("user_type"),
+                   f"exp {fmt_ms(left)}" if left else None,
+                   "quota exceeded" if d.get("isQuotaExceeded") or d.get("is_quota_exceeded") else None,
+                   main_label="cr")
+
+
+@provider("qoder", "Qoder")
+def p_qoder():
+    openapi = ENV.get("QODER_OPENAPI") or _QODER_OPENAPI
+    d = http_json(f"{openapi}/api/v2/quota/usage",
+                  {"Authorization": f"Bearer {qoder_token(openapi)}",
+                   "Accept": "application/json"})
+    return qoder_from_quota(d)
+
+
 # grok CLI 公开 OIDC token 端点 (issuer https://auth.x.ai well-known)
 _GROK_TOKEN = "https://auth.x.ai/oauth2/token"
 _GROK_BILLING = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
@@ -683,7 +800,7 @@ def p_gemini():
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
-_ORDER = ["claude", "codex", "spark", "grok", "glm", "minimax", "gemini",
+_ORDER = ["claude", "codex", "spark", "grok", "glm", "minimax", "qoder", "gemini",
           "deepseek", "custom"]
 
 

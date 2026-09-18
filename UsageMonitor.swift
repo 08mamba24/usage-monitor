@@ -433,8 +433,10 @@ final class RingCell: NSView {
         case "codex": "O"
         case "spark": "S"
         case "gemini": "G"
+        case "grok": "X"   // x.ai; 避免 Grok/Gemini 都落默认 "G" 无法区分
         case "glm": "Z"
         case "minimax": "M"
+        case "qoder": "Q"
         case "deepseek": "D"
         default: String(p.name.prefix(1))
         }
@@ -479,7 +481,11 @@ final class BalanceCell: NSView {
     }
 
     private func shortLabel(_ p: Provider) -> String {
-        p.id == "deepseek" ? "D" : String(p.name.prefix(1))
+        switch p.id {
+        case "deepseek": "D"
+        case "grok": "X"   // 与列表行 shortLabel 同口径, 防与 Gemini 撞 "G"
+        default: String(p.name.prefix(1))
+        }
     }
 }
 

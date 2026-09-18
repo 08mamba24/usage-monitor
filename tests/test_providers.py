@@ -1,3 +1,5 @@
+import json
+import os
 import unittest
 from unittest import mock
 
@@ -289,6 +291,150 @@ class CodexSparkPoolTests(unittest.TestCase):
         self.assertTrue(r["ok"])
         self.assertEqual(r["pct"], 9)
         self.assertEqual(r["wins"][0]["label"], "7d")
+
+
+class QoderCreditPoolTests(unittest.TestCase):
+    """qodercn openapi /api/v2/quota/usage → credit 池行。
+
+    Ground truth: 2026-09-15 本机 qodercn 1.1.51 日志里的真实响应
+    (userQuota total=300 used=14, userType=personal_professional_trial, expiresAt epoch ms)。
+    """
+
+    QUOTA = {
+        "userId": "01a0974d-6ffb-7d10-8cee-155a404d3641",
+        "userType": "personal_professional_trial",
+        "usageType": "credits",
+        "totalUsagePercentage": 0.62,
+        "isQuotaExceeded": False,
+        "expiresAt": 1790454429999,
+        "userQuota": {"total": 300.0, "used": 247.0, "remaining": 53.0,
+                      "percentage": 0.83, "unit": "credits"},
+        "addOnQuota": {"total": 100.0, "used": 0.0, "remaining": 100.0,
+                       "percentage": 0.0, "unit": "credits"},
+    }
+
+    def test_credit_pool_percent_and_expiry(self):
+        r = providers.qoder_from_quota(self.QUOTA)
+        self.assertEqual(r["id"], "qoder")
+        self.assertTrue(r["ok"])
+        # 官方口径: (247+0)/(300+100) = 61.75% → 62, 与 totalUsagePercentage 0.62 一致
+        self.assertEqual(r["pct"], 62)
+        self.assertTrue(r["value"].startswith("cr 62%"))
+        self.assertIn("53/300 + 100/100 left", r["detail"])
+        self.assertIn("personal_professional_trial", r["detail"])
+        self.assertIn("exp ", r["detail"])
+
+    def test_addon_partially_used_merges_into_pct(self):
+        r = providers.qoder_from_quota({
+            "expiresAt": 1790454429999,
+            "userQuota": {"total": 300, "used": 300, "unit": "credits"},
+            "addOnQuota": {"total": 100, "used": 40, "unit": "credits"}})
+        self.assertEqual(r["pct"], 85)            # (300+40)/400
+        self.assertIn("0/300 + 60/100 left", r["detail"])
+
+    def test_snake_case_aliases(self):
+        r = providers.qoder_from_quota({
+            "user_type": "personal", "expires_at": 1790454429999,
+            "user_quota": {"total": 100, "used": 100, "unit": "credits"},
+            "is_quota_exceeded": True})
+        self.assertEqual(r["pct"], 100)
+        self.assertIn("quota exceeded", r["detail"])
+        self.assertIn("0/100 left", r["detail"])
+
+    def test_shared_quota_cap_fallback(self):
+        r = providers.qoder_from_quota({
+            "shared_quota": {"used": 30, "cap": 200, "unit": "credits"}})
+        self.assertEqual(r["pct"], 15)
+
+    def test_no_quota_data_is_not_ok(self):
+        r = providers.qoder_from_quota({})
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["detail"], "no quota data")
+
+
+class QoderTokenTests(unittest.TestCase):
+    """PAT → jobToken/exchange → Bearer; state 缓存 + 临期 refresh。"""
+
+    def setUp(self):
+        import tempfile
+        self._tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        self._tmp.close()
+        self._state_patch = mock.patch.object(providers, "STATE", self._tmp.name)
+        self._state_patch.start()
+        self._env_patch = mock.patch.object(providers, "ENV", {"QODER_PAT": "pat-1"})
+        self._env_patch.start()
+
+    def tearDown(self):
+        self._state_patch.stop()
+        self._env_patch.stop()
+        os.unlink(self._tmp.name)
+
+    def test_exchange_then_cache(self):
+        with mock.patch.object(providers, "http_json",
+                               return_value={"token": "bearer-1", "refresh_token": "r1",
+                                             "expire_time": 9999999999}) as hj:
+            self.assertEqual(providers.qoder_token("https://api.local"), "bearer-1")
+            self.assertEqual(providers.qoder_token("https://api.local"), "bearer-1")
+        self.assertEqual(hj.call_count, 1)   # 第二次走缓存
+        self.assertIn("exchange", hj.call_args[0][0])
+        self.assertEqual(json.loads(hj.call_args.kwargs["data"])["personal_token"], "pat-1")
+
+    def test_stale_token_refreshes_with_refresh_token(self):
+        import time
+        s = {"qoder_token": {"token": "old", "refresh_token": "r1", "expire": time.time() - 1}}
+        json.dump(s, open(self._tmp.name, "w"))
+        with mock.patch.object(providers, "http_json",
+                               return_value={"token": "bearer-2", "expire_time": 9999999999}) as hj:
+            self.assertEqual(providers.qoder_token("https://api.local"), "bearer-2")
+        self.assertIn("jobToken/refresh", hj.call_args[0][0])
+        self.assertEqual(json.loads(hj.call_args.kwargs["data"])["refresh_token"], "r1")
+
+    def test_failed_refresh_falls_back_to_exchange(self):
+        import time
+        s = {"qoder_token": {"token": "old", "refresh_token": "r1", "expire": time.time() - 1}}
+        json.dump(s, open(self._tmp.name, "w"))
+        calls = []
+        def fake_hj(url, headers=None, data=None, timeout=None):
+            calls.append(url)
+            if "refresh" in url:
+                raise RuntimeError("refresh dead")
+            return {"token": "bearer-3", "expire_time": 9999999999}
+        with mock.patch.object(providers, "http_json", fake_hj):
+            self.assertEqual(providers.qoder_token("https://api.local"), "bearer-3")
+        self.assertTrue(any("refresh" in u for u in calls))
+        self.assertTrue(any("exchange" in u for u in calls))
+
+    def test_missing_pat_is_hidden(self):
+        with mock.patch.object(providers, "ENV", {}), \
+             mock.patch.dict(os.environ, clear=False):
+            for k in ("QODERCN_PERSONAL_ACCESS_TOKEN", "QODER_PERSONAL_ACCESS_TOKEN"):
+                os.environ.pop(k, None)
+            r = providers.p_qoder()
+        self.assertEqual(r["kind"], "missing")
+
+    def test_expires_in_relative_seconds(self):
+        import time
+        with mock.patch.object(providers, "http_json",
+                               return_value={"token": "t", "expires_in": 3600}):
+            providers.qoder_token("https://api.local")
+        e = json.load(open(self._tmp.name))["qoder_token"]
+        self.assertAlmostEqual(e["expire"], time.time() + 3600, delta=5)
+
+    def test_real_exchange_shape_iso_and_ms(self):
+        """实测 exchange 响应: expires_at 是 ISO 串, expires_in 是毫秒 (86400000=24h)"""
+        import time
+        with mock.patch.object(providers, "http_json",
+                               return_value={"token": "jt-x", "refresh_token": "jrt-x",
+                                             "expires_at": "2026-09-17T00:37:35Z",
+                                             "expires_in": 86400000}):
+            providers.qoder_token("https://api.local")
+        e = json.load(open(self._tmp.name))["qoder_token"]
+        self.assertEqual(e["refresh_token"], "jrt-x")
+        self.assertAlmostEqual(e["expire"], 1789605455, delta=5)   # 2026-09-17T00:37:35Z
+        # ISO 串与毫秒时长两种表达解析等价 (86400000ms = 24h 前的 now 起算)
+        iso = providers._tok_exp("2026-09-17T00:37:35Z", 0)
+        ms = providers._tok_exp(86400000, 1789605455 - 86400)
+        self.assertAlmostEqual(iso, ms, delta=1)
 
 
 if __name__ == "__main__":
