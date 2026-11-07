@@ -11,5 +11,9 @@ created: 2026-07-28
 
 | ID | Name | Status | Owner | Link |
 |----|------|--------|-------|------|
-| F001 | Windows 适配 — tkinter 悬浮条 + Windows CI | in-progress | 08mamba24 | [docs/features/F001-windows-port.md](docs/features/F001-windows-port.md) |
-| F002 | Windows 磨砂壳 — Tauri + Acrylic | idea | TBD (待 F001 真机验收) | [docs/features/F002-tauri-acrylic-shell.md](docs/features/F002-tauri-acrylic-shell.md) |
+
+当前没有登记中的活动 Feature。
+
+2026-11-08：按用户决定停止本仓库的 Windows 演进，内网 Windows 改用 DSH 插件。
+[F001](docs/features/F001-windows-port.md) 停止验收推进，
+[F002](docs/features/F002-tauri-acrylic-shell.md) 取消；现有代码保留。

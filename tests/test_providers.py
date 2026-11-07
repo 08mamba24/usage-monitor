@@ -6,6 +6,32 @@ from unittest import mock
 import providers
 
 
+class GlmEndpointTests(unittest.TestCase):
+    QUOTA = {"data": {"level": "pro", "limits": [
+        {"type": "TOKENS_LIMIT", "percentage": 100},
+        {"type": "TIME_LIMIT", "currentValue": 218, "usage": 1000}]}}
+
+    def test_domestic_endpoint_reports_exhausted_quota(self):
+        with mock.patch.object(providers, "ENV", {"GLM_BASE_URL": "https://open.bigmodel.cn/"}), \
+             mock.patch.object(providers, "cred", return_value="test-key"), \
+             mock.patch.object(providers, "http_json", return_value=self.QUOTA) as http:
+            r = providers.p_glm()
+        self.assertEqual(http.call_args.args[0],
+                         "https://open.bigmodel.cn/api/monitor/usage/quota/limit")
+        self.assertEqual(http.call_args.args[1]["Authorization"], "test-key")
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["pct"], 100)
+        self.assertIn("218/1000", r["detail"])
+
+    def test_default_endpoint_remains_international(self):
+        with mock.patch.object(providers, "ENV", {}), \
+             mock.patch.object(providers, "cred", return_value="test-key"), \
+             mock.patch.object(providers, "http_json", return_value=self.QUOTA) as http:
+            providers.p_glm()
+        self.assertEqual(http.call_args.args[0],
+                         "https://api.z.ai/api/monitor/usage/quota/limit")
+
+
 class FormatResetTimeTests(unittest.TestCase):
     def test_uses_decimal_hours_during_last_six_hours(self):
         self.assertEqual(providers.fmt_ms(91 * 60 * 1000), "1.5h")
@@ -306,12 +332,23 @@ class QoderCreditPoolTests(unittest.TestCase):
         "usageType": "credits",
         "totalUsagePercentage": 0.62,
         "isQuotaExceeded": False,
-        "expiresAt": 1790454429999,
+        "expiresAt": 1792281600000,
         "userQuota": {"total": 300.0, "used": 247.0, "remaining": 53.0,
                       "percentage": 0.83, "unit": "credits"},
         "addOnQuota": {"total": 100.0, "used": 0.0, "remaining": 100.0,
                        "percentage": 0.0, "unit": "credits"},
     }
+
+    def setUp(self):
+        # 固定采样时刻而不是推迟 fixture 到期日，避免测试随真实日期再次失效。
+        self.datetime_type = providers.datetime.datetime
+        clock_patch = mock.patch.object(providers.datetime, "datetime",
+                                        wraps=self.datetime_type)
+        self.clock = clock_patch.start()
+        self.addCleanup(clock_patch.stop)
+        self.clock.now.return_value = self.datetime_type.fromtimestamp(
+            self.QUOTA["expiresAt"] / 1000 - 2 * 86400,
+            tz=providers.datetime.timezone.utc)
 
     def test_credit_pool_percent_and_expiry(self):
         r = providers.qoder_from_quota(self.QUOTA)
@@ -320,21 +357,33 @@ class QoderCreditPoolTests(unittest.TestCase):
         # 官方口径: (247+0)/(300+100) = 61.75% → 62, 与 totalUsagePercentage 0.62 一致
         self.assertEqual(r["pct"], 62)
         self.assertTrue(r["value"].startswith("cr 62%"))
-        self.assertIn("53/300 + 100/100 left", r["detail"])
+        # 双池合并口径 (用户确认): 剩余 53+100=153 / 总量 400
+        self.assertIn("153/400 left", r["detail"])
         self.assertIn("personal_professional_trial", r["detail"])
-        self.assertIn("exp ", r["detail"])
+        self.assertIn("exp 2d", r["detail"])
+
+    def test_expired_plan_omits_expiry_countdown(self):
+        for after_expiry in (0, 86400):
+            with self.subTest(after_expiry=after_expiry):
+                self.clock.now.return_value = self.datetime_type.fromtimestamp(
+                    self.QUOTA["expiresAt"] / 1000 + after_expiry,
+                    tz=providers.datetime.timezone.utc)
+                r = providers.qoder_from_quota(self.QUOTA)
+                self.assertNotIn("exp ", r["detail"])
+                self.assertIn("153/400 left", r["detail"])
+                self.assertEqual(r["pct"], 62)
 
     def test_addon_partially_used_merges_into_pct(self):
         r = providers.qoder_from_quota({
-            "expiresAt": 1790454429999,
+            "expiresAt": 1792281600000,
             "userQuota": {"total": 300, "used": 300, "unit": "credits"},
             "addOnQuota": {"total": 100, "used": 40, "unit": "credits"}})
         self.assertEqual(r["pct"], 85)            # (300+40)/400
-        self.assertIn("0/300 + 60/100 left", r["detail"])
+        self.assertIn("60/400 left", r["detail"])
 
     def test_snake_case_aliases(self):
         r = providers.qoder_from_quota({
-            "user_type": "personal", "expires_at": 1790454429999,
+            "user_type": "personal", "expires_at": 1792281600000,
             "user_quota": {"total": 100, "used": 100, "unit": "credits"},
             "is_quota_exceeded": True})
         self.assertEqual(r["pct"], 100)
@@ -382,7 +431,8 @@ class QoderTokenTests(unittest.TestCase):
     def test_stale_token_refreshes_with_refresh_token(self):
         import time
         s = {"qoder_token": {"token": "old", "refresh_token": "r1", "expire": time.time() - 1}}
-        json.dump(s, open(self._tmp.name, "w"))
+        with open(self._tmp.name, "w") as state_file:
+            json.dump(s, state_file)
         with mock.patch.object(providers, "http_json",
                                return_value={"token": "bearer-2", "expire_time": 9999999999}) as hj:
             self.assertEqual(providers.qoder_token("https://api.local"), "bearer-2")
@@ -392,7 +442,8 @@ class QoderTokenTests(unittest.TestCase):
     def test_failed_refresh_falls_back_to_exchange(self):
         import time
         s = {"qoder_token": {"token": "old", "refresh_token": "r1", "expire": time.time() - 1}}
-        json.dump(s, open(self._tmp.name, "w"))
+        with open(self._tmp.name, "w") as state_file:
+            json.dump(s, state_file)
         calls = []
         def fake_hj(url, headers=None, data=None, timeout=None):
             calls.append(url)
@@ -417,7 +468,8 @@ class QoderTokenTests(unittest.TestCase):
         with mock.patch.object(providers, "http_json",
                                return_value={"token": "t", "expires_in": 3600}):
             providers.qoder_token("https://api.local")
-        e = json.load(open(self._tmp.name))["qoder_token"]
+        with open(self._tmp.name) as state_file:
+            e = json.load(state_file)["qoder_token"]
         self.assertAlmostEqual(e["expire"], time.time() + 3600, delta=5)
 
     def test_real_exchange_shape_iso_and_ms(self):
@@ -428,13 +480,71 @@ class QoderTokenTests(unittest.TestCase):
                                              "expires_at": "2026-09-17T00:37:35Z",
                                              "expires_in": 86400000}):
             providers.qoder_token("https://api.local")
-        e = json.load(open(self._tmp.name))["qoder_token"]
+        with open(self._tmp.name) as state_file:
+            e = json.load(state_file)["qoder_token"]
         self.assertEqual(e["refresh_token"], "jrt-x")
         self.assertAlmostEqual(e["expire"], 1789605455, delta=5)   # 2026-09-17T00:37:35Z
         # ISO 串与毫秒时长两种表达解析等价 (86400000ms = 24h 前的 now 起算)
         iso = providers._tok_exp("2026-09-17T00:37:35Z", 0)
         ms = providers._tok_exp(86400000, 1789605455 - 86400)
         self.assertAlmostEqual(iso, ms, delta=1)
+
+
+class CodeBuddySummaryTests(unittest.TestCase):
+    """copilot.tencent.com /billing/meter/get-user-resource-summary → credit 池行。
+
+    Ground truth: 2026-09-28 本机实测响应 (裂变包 300/300 + 赠送月包 500/484.27,
+    与 WorkBuddy 桌面"套餐与积分"页一致)。
+    """
+
+    SUMMARY = {"code": 0, "msg": "OK", "data": {
+        "Packages": [
+            {"PackageCode": "TCACA_code_007_nzdH5h4Nl0", "CapacityUnit": "credits",
+             "CycleTotalCapacity": "300", "CycleRemainCapacity": "300",
+             "CycleUsedCapacity": "0", "TotalCount": 3},
+            {"PackageCode": "TCACA_code_008_cfWoLwvjU4", "CapacityUnit": "credits",
+             "CycleTotalCapacity": "500", "CycleRemainCapacity": "484.27",
+             "CycleUsedCapacity": "15.73", "TotalCount": 1}],
+        "SubscriptionPackageCode": "", "IsPaidUser": False}}
+
+    def test_pools_merge_into_credit_percent(self):
+        r = providers.codebuddy_from_summary(self.SUMMARY)
+        self.assertEqual(r["id"], "codebuddy")
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["pct"], 2)               # 15.73/800
+        self.assertTrue(r["value"].startswith("cr 2%"))
+        self.assertIn("784.27/800 left", r["detail"])
+        self.assertIn("free", r["detail"])          # IsPaidUser=False
+
+    def test_paid_user_marks_pro(self):
+        d = {"data": {"IsPaidUser": True, "Packages": [
+            {"CycleTotalCapacity": "500", "CycleUsedCapacity": "500"}]}}
+        r = providers.codebuddy_from_summary(d)
+        self.assertEqual(r["pct"], 100)
+        self.assertIn("pro", r["detail"])
+        self.assertIn("0/500 left", r["detail"])
+
+    def test_no_packages_is_not_ok(self):
+        r = providers.codebuddy_from_summary({"data": {"Packages": []}})
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["detail"], "no quota data")
+
+
+class CodeBuddySessionTests(unittest.TestCase):
+    def _auth(self, exp, token="tok"):
+        return {"auth": {"accessToken": token, "expiresAt": exp}, "account": {}}
+
+    def test_valid_cli_session_token(self):
+        import time
+        with mock.patch.object(providers, "_json_file",
+                               return_value=self._auth(time.time() * 1000 + 86400000,
+                                                       token="cli-tok")):
+            self.assertEqual(providers.codebuddy_session(), "cli-tok")
+
+    def test_all_expired_raises_missing_cred(self):
+        with mock.patch.object(providers, "_json_file", return_value={}):
+            with self.assertRaises(providers.MissingCred):
+                providers.codebuddy_session()
 
 
 if __name__ == "__main__":

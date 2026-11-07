@@ -8,6 +8,8 @@ struct Win: Decodable {
     let label: String; let pct: Double; let reset: String?
     let tone: String?   // 本窗口的 pace 评级 (长窗口预热期/无重置时间为 nil)
     var hot: Bool { tone == "orange" || tone == "red" }
+    // 数据契约保持已用百分比；圆环和悬停文字统一转换为剩余量。
+    var remainingFraction: Double { (100 - min(max(pct, 0), 100)) / 100 }
 }
 
 struct Provider: Decodable {
@@ -20,6 +22,27 @@ struct Provider: Decodable {
     var toneColor: NSColor? { paceColor(tone) }
 }
 struct Payload: Decodable { let updated: String; let providers: [Provider] }
+
+// 持有到 app.run 结束；测试只在临时目录申请锁，不碰常驻实例的锁。
+final class InstanceLock {
+    private let descriptor: Int32
+
+    init(at url: URL) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        // 刷新会拉起 Python；exec 后关闭描述符，避免子进程延长锁的寿命。
+        let fd = open(url.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+            let code = errno
+            close(fd)
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+        }
+        descriptor = fd
+    }
+
+    deinit { close(descriptor) }
+}
 
 struct UsageSample: Codable {
     let timestamp: TimeInterval
@@ -284,7 +307,7 @@ final class MiniRingView: NSView {
 // ── 单格视图：迷你圆环 (精确数字看列表或悬停 tooltip) ───────────────────────
 final class RingCell: NSView {
     private let ring = MiniRingView()
-    private let popover = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 112, height: 56),
+    private let popover = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 136, height: 56),
                                   styleMask: [.borderless, .nonactivatingPanel],
                                   backing: .buffered, defer: false)
     private let popoverLabel = NSTextField(labelWithString: "")
@@ -371,14 +394,14 @@ final class RingCell: NSView {
             return
         }
         var hoverRows = [winAbbrev(w)]
-        var arcs = [MiniRingView.Arc(frac: w.pct / 100,
+        var arcs = [MiniRingView.Arc(frac: w.remainingFraction,
                                      color: p.toneColor ?? pctColor(w.pct),
                                      width: MiniRingView.Metrics.outerWidth,
                                      inset: 0, dashed: false)]
         if let w2 = (p.wins ?? []).dropFirst().first {
             let quota = w2.label.hasPrefix("MCP")
             let color = (paceColor(w2.tone) ?? pctColor(w2.pct)).withAlphaComponent(quota ? 0.6 : 0.75)
-            arcs.append(MiniRingView.Arc(frac: w2.pct / 100, color: color,
+            arcs.append(MiniRingView.Arc(frac: w2.remainingFraction, color: color,
                                          width: MiniRingView.Metrics.innerWidth,
                                          inset: MiniRingView.Metrics.innerInset,
                                          dashed: quota))
@@ -387,6 +410,8 @@ final class RingCell: NSView {
         // 紧凑悬停框追加补充行 (如 Claude 的美元超额 $6.1k/20k)
         if let cv = p.cval, !cv.isEmpty { hoverRows.append(cv) }
         hoverText = hoverRows.joined(separator: "\n")
+        toolTip = "\(p.name)  \(hoverRows.joined(separator: " · "))\nUsed: \(p.value)"
+            + (p.detail.isEmpty ? "" : " · \(p.detail)")
         ring.arcs = arcs
         setRingHover(hoveringRing)
     }
@@ -424,7 +449,8 @@ final class RingCell: NSView {
     }
 
     private func winAbbrev(_ w: Win) -> String {
-        "\(w.label) \(Int(round(w.pct)))%" + (w.reset.map { " /\($0)" } ?? "")
+        "\(w.label) \(Int(round(w.remainingFraction * 100)))% left"
+            + (w.reset.map { " /\($0)" } ?? "")
     }
 
     private func shortLabel(_ p: Provider) -> String {
@@ -437,6 +463,7 @@ final class RingCell: NSView {
         case "glm": "Z"
         case "minimax": "M"
         case "qoder": "Q"
+        case "codebuddy": "C"
         case "deepseek": "D"
         default: String(p.name.prefix(1))
         }
@@ -2060,7 +2087,17 @@ final class App: NSObject, NSApplicationDelegate {
 }
 
 let app = NSApplication.shared
+// launchd 与手动启动共用锁，避免两套刘海翼叠窗拦截悬停事件。
+let instanceLock: InstanceLock
+do {
+    instanceLock = try InstanceLock(at: URL(fileURLWithPath:
+        NSHomeDirectory() + "/.config/usage-monitor/instance.lock"))
+} catch let error as NSError {
+    if error.domain == NSPOSIXErrorDomain && error.code == Int(EWOULDBLOCK) { exit(0) }
+    fputs("usage-monitor: instance lock: \(error.localizedDescription)\n", stderr)
+    exit(1)
+}
 let delegate = App()
 app.delegate = delegate
 app.setActivationPolicy(.accessory)   // 不占 Dock
-app.run()
+withExtendedLifetime(instanceLock) { app.run() }

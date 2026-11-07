@@ -8,7 +8,10 @@ created: 2026-08-30
 
 # F002: Windows 磨砂壳 — Tauri + Acrylic
 
-> Status: idea | Owner: TBD (待 F001 AC-5 真机验收后决策)
+> Status: cancelled | Owner: none
+
+2026-11-08：用户决定内网 Windows 改用 DSH 插件，本仓库不再演进 Windows 版本。
+本方案取消，不再等待 F001 真机验收，也不启动 Tauri/Acrylic 实现。以下保留原方案供查阅。
 
 ## Why
 F001 的 tkinter 悬浮条拿不到 Win11 真 Acrylic: Acrylic 由 DWM 在客户区后方合成,

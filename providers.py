@@ -33,17 +33,19 @@ WEEK = 7 * 24 * 3600 * 1000
 def load_env():
     env = {}
     if os.path.exists(CONF):
-        for line in open(CONF):
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                env[k.strip()] = v.strip()
+        with open(CONF) as env_file:
+            for line in env_file:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    env[k.strip()] = v.strip()
     return env
 
 
 def _json_file(path):
     try:
-        return json.load(open(os.path.expanduser(path)))
+        with open(os.path.expanduser(path)) as state_file:
+            return json.load(state_file)
     except Exception:
         return {}
 
@@ -280,7 +282,8 @@ def p_claude():
 def p_glm():
     # z.ai coding plan 配额（注意 Authorization 不加 Bearer）
     key = cred("GLM_API_KEY", opencode="zai-coding-plan", hermes="zai")
-    d = http_json("https://api.z.ai/api/monitor/usage/quota/limit",
+    base = (ENV.get("GLM_BASE_URL") or "https://api.z.ai").rstrip("/")
+    d = http_json(f"{base}/api/monitor/usage/quota/limit",
                   {"Authorization": key, "Accept-Language": "en-US,en",
                    "Content-Type": "application/json"})
     data = d.get("data") or {}
@@ -308,10 +311,12 @@ def p_minimax():
                    detail=f"err: {(d.get('base_resp') or {}).get('status_msg', '?')}")
     m = (d.get("model_remains") or [{}])[0]
     # 接口返回『剩余%』→ 转已用%
+    interval_left = m.get("current_interval_remaining_percent")
+    weekly_left = m.get("current_weekly_remaining_percent")
     return pct_row("minimax", "MiniMax",
-                   100 - (m.get("current_interval_remaining_percent") or 100),
+                   100 - (interval_left if interval_left is not None else 100),
                    m.get("remains_time"),
-                   win("wk", 100 - (m.get("current_weekly_remaining_percent") or 100),
+                   win("wk", 100 - (weekly_left if weekly_left is not None else 100),
                        fmt_ms(m["weekly_remains_time"]) if m.get("weekly_remains_time") else None,
                        left_ms=m.get("weekly_remains_time"), window_ms=WEEK))
 
@@ -438,6 +443,8 @@ def p_spark():
 #   GET  {openapi}/api/v2/quota/usage  → userQuota{total,used,remaining,unit:credits}
 # CLI 自己的 ~/.qoder-cn/.auth/user 是 WASM 加密 blob 无法复用, 故 PAT 独立换 token。
 _QODER_OPENAPI = "https://openapi.qoder.com.cn"
+# quota/usage 返回的 9999-12-31 UTC 占位值, 不展示为实际到期倒计时。
+_QODER_EXPIRY_PLACEHOLDER = 253402214400000
 
 
 def qoder_pat():
@@ -473,7 +480,8 @@ def _save_state(key, val):
     """重读-合并-写回, 避免覆盖其他 provider (day_spend) 刚写入的条目"""
     s = _json_file(STATE)
     s[key] = val
-    json.dump(s, open(STATE, "w"))
+    with open(STATE, "w") as state_file:
+        json.dump(s, state_file)
 
 
 def qoder_token(openapi):
@@ -513,7 +521,7 @@ def qoder_from_quota(d):
     """quota/usage JSON → pct_row。credit 是消耗池非时间窗: 主值只报百分比,
     套餐到期 (expiresAt) 与剩余量进 detail, 不参与 pace 配色。
     资源包 (addOnQuota, 桌面端"资源包") 与主池合并算百分比 — 与官方
-    totalUsagePercentage 口径一致: (u+a)/(U+A); detail 按池拆分显示"""
+    totalUsagePercentage 口径一致: (u+a)/(U+A); detail 给合并剩余量"""
     q = d.get("user_quota") or d.get("userQuota") or {}
     if not q.get("total"):
         # 企业/共享池: shared_quota 用 cap 而非 total
@@ -522,17 +530,20 @@ def qoder_from_quota(d):
         q = {"total": q.get("cap") or q.get("total"), "used": q.get("used")}
     total = q.get("total") or 0
     used = q.get("used") or 0
-    if not total:
-        return row("qoder", "Qoder", detail="no quota data")
     a = d.get("add_on_quota") or d.get("addOnQuota") or {}
     a_total, a_used = a.get("total") or 0, a.get("used") or 0
+    if total + a_total <= 0:
+        return row("qoder", "Qoder", detail="no quota data")
     expires = d.get("expiresAt") or d.get("expires_at")
-    left = ms_left(expires) if expires else None
-    left_txt = (f"{total - used:g}/{total:g} + {a_total - a_used:g}/{a_total:g} left"
-                if a_total else f"{total - used:g}/{total:g} left")
+    left = ms_left(expires) if expires and expires != _QODER_EXPIRY_PLACEHOLDER else None
+    # 双池合并剩余 "2600/2600 left": 与百分比同口径, 官方 UI 也是合并的"总剩余"
+    left_txt = f"{total + a_total - used - a_used:g}/{total + a_total:g} left"
+    # userType 缩短: personal_professional 21 字符在列表模式挤掉后面的 exp 段
+    raw_ut = d.get("userType") or d.get("user_type")
+    ut = "pro" if raw_ut == "personal_professional" else raw_ut
     return pct_row("qoder", "Qoder", (used + a_used) * 100 / (total + a_total), None,
                    left_txt,
-                   d.get("userType") or d.get("user_type"),
+                   ut,
                    f"exp {fmt_ms(left)}" if left else None,
                    "quota exceeded" if d.get("isQuotaExceeded") or d.get("is_quota_exceeded") else None,
                    main_label="cr")
@@ -545,6 +556,66 @@ def p_qoder():
                   {"Authorization": f"Bearer {qoder_token(openapi)}",
                    "Accept": "application/json"})
     return qoder_from_quota(d)
+
+
+# ── codebuddy CLI (腾讯) ─────────────────────────────────────────────────────
+# 凭据: codebuddy CLI 的明文会话 (CLI 使用时自动刷新回写, 这里只读):
+#   macOS: ~/Library/Application Support/CodeBuddyExtension/Data/Public/auth/
+#          Tencent-Cloud.coding-copilot.info
+#   Win:   %APPDATA%\CodeBuddyExtension\Data\Public\auth\同名文件
+#   auth.accessToken (JWT ~30 天)/expiresAt (epoch ms)。
+# 同目录 workbuddy-desktop.info (WorkBuddy 桌面) 的 token 签发给 codebuddy.cn 域,
+# 对 copilot.tencent.com 实测 401, 不可用 → 只认 CLI 会话。
+# 自刷新不可行: /v2/auth/token/refresh 需 enterpriseHeaders/会话, 独立调不通;
+# 过期前任意打开一次 codebuddy CLI 即续期。
+# 用量接口 (WorkBuddy app.asar SubscriptionUsagePanel→main/tar.js 逆向):
+#   POST {base}/billing/meter/get-user-resource-summary, body {}
+#   User-Agent 必需 (缺失被 WAF 403); data.Packages[] 各积分池的
+#   CycleTotalCapacity/CycleUsedCapacity (字符串, credits), 全池合并=官方"总剩余"。
+_CB_BASE = "https://copilot.tencent.com"
+
+
+def codebuddy_session():
+    """CLI 会话文件的 accessToken; 缺失/临期抛 MissingCred (行隐藏)"""
+    if sys.platform == "darwin":
+        path = ("~/Library/Application Support/CodeBuddyExtension/Data/Public/"
+                "auth/Tencent-Cloud.coding-copilot.info")
+    else:
+        path = os.path.join(os.environ.get("APPDATA", "~/AppData/Roaming"),
+                            "CodeBuddyExtension", "Data", "Public", "auth",
+                            "Tencent-Cloud.coding-copilot.info")
+    a = _json_file(os.path.expanduser(path)).get("auth") or {}
+    now = datetime.datetime.now().timestamp() * 1000
+    if not (a.get("accessToken") and a.get("expiresAt", 0) > now + 60000):
+        raise MissingCred("codebuddy CLI login once")
+    return a["accessToken"]
+
+
+def codebuddy_from_summary(d):
+    """summary JSON → pct_row。credits 消耗池 (同 qoder 口径):
+    全部 Packages 合并算百分比与剩余量, 无时间窗不参与 pace"""
+    if d.get("code") not in (0, None):
+        return row("codebuddy", "CodeBuddy", detail=f"err: CodeBuddy API {d['code']}")
+    data = d.get("data") or {}
+    pkgs = data.get("Packages") or []
+    total = sum(float(p.get("CycleTotalCapacity") or 0) for p in pkgs)
+    used = sum(float(p.get("CycleUsedCapacity") or 0) for p in pkgs)
+    if not total:
+        return row("codebuddy", "CodeBuddy", detail="no quota data")
+    return pct_row("codebuddy", "CodeBuddy", used * 100 / total, None,
+                   f"{total - used:g}/{total:g} left",
+                   "pro" if data.get("IsPaidUser") else "free",
+                   main_label="cr")
+
+
+@provider("codebuddy", "CodeBuddy")
+def p_codebuddy():
+    d = http_json(f"{_CB_BASE}/billing/meter/get-user-resource-summary",
+                  {"Authorization": f"Bearer {codebuddy_session()}",
+                   "User-Agent": "Mozilla/5.0",   # WAF 要求, 缺失 403
+                   "Content-Type": "application/json", "Accept-Language": "zh"},
+                  data=b"{}")
+    return codebuddy_from_summary(d)
 
 
 # grok CLI 公开 OIDC token 端点 (issuer https://auth.x.ai well-known)
@@ -800,8 +871,8 @@ def p_gemini():
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
-_ORDER = ["claude", "codex", "spark", "grok", "glm", "minimax", "qoder", "gemini",
-          "deepseek", "custom"]
+_ORDER = ["claude", "codex", "spark", "grok", "glm", "minimax", "qoder", "codebuddy",
+          "gemini", "deepseek", "custom"]
 
 
 def collect():
