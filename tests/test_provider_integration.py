@@ -32,6 +32,16 @@ class StatePersistenceTests(unittest.TestCase):
 
 
 class QuotaBoundaryTests(unittest.TestCase):
+    def test_qoder_expiry_placeholder_has_no_countdown(self):
+        result = providers.qoder_from_quota({
+            "expiresAt": 253402214400000,  # observed 9999-12-31 UTC placeholder
+            "userType": "personal_standard",
+            "userQuota": {"total": 1200, "used": 1000},
+        })
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["pct"], 83)
+        self.assertEqual(result["detail"], "200/1200 left · personal_standard")
+
     def test_qoder_addon_is_usable_without_a_base_pool(self):
         for quota in (
             {"userQuota": {"total": 0}, "addOnQuota": {"total": 100, "used": 25}},

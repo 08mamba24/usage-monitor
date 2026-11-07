@@ -442,6 +442,8 @@ def p_spark():
 #   GET  {openapi}/api/v2/quota/usage  → userQuota{total,used,remaining,unit:credits}
 # CLI 自己的 ~/.qoder-cn/.auth/user 是 WASM 加密 blob 无法复用, 故 PAT 独立换 token。
 _QODER_OPENAPI = "https://openapi.qoder.com.cn"
+# quota/usage 返回的 9999-12-31 UTC 占位值, 不展示为实际到期倒计时。
+_QODER_EXPIRY_PLACEHOLDER = 253402214400000
 
 
 def qoder_pat():
@@ -532,7 +534,7 @@ def qoder_from_quota(d):
     if total + a_total <= 0:
         return row("qoder", "Qoder", detail="no quota data")
     expires = d.get("expiresAt") or d.get("expires_at")
-    left = ms_left(expires) if expires else None
+    left = ms_left(expires) if expires and expires != _QODER_EXPIRY_PLACEHOLDER else None
     # 双池合并剩余 "2600/2600 left": 与百分比同口径, 官方 UI 也是合并的"总剩余"
     left_txt = f"{total + a_total - used - a_used:g}/{total + a_total:g} left"
     # userType 缩短: personal_professional 21 字符在列表模式挤掉后面的 exp 段
