@@ -184,7 +184,7 @@ final class RowView: NSView {
             barBg.trailingAnchor.constraint(equalTo: trailingAnchor),
             barBg.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 5),
             barBg.heightAnchor.constraint(equalToConstant: 4),
-            bar.leadingAnchor.constraint(equalTo: barBg.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: barBg.trailingAnchor),
             bar.centerYAnchor.constraint(equalTo: barBg.centerYAnchor),
             bar.heightAnchor.constraint(equalToConstant: 4),
             barWidth,
@@ -239,7 +239,7 @@ final class RowView: NSView {
         detailLabel.attributedStringValue = attr
         if let pct = p.pct, p.ok {
             barBg.isHidden = false; bar.isHidden = false
-            barWidth.constant = totalWidth * CGFloat(min(max(pct, 0), 100)) / 100.0
+            barWidth.constant = totalWidth * (1 - CGFloat(min(max(pct, 0), 100)) / 100)
             // 优先按消耗速度配色; 无评级时退回绝对百分比阈值
             bar.layer?.backgroundColor = (p.toneColor ?? pctColor(pct)).cgColor
         } else {
@@ -282,8 +282,11 @@ final class MiniRingView: NSView {
             track.stroke()
             guard a.frac > 0 else { continue }
             let p = NSBezierPath()
-            p.appendArc(withCenter: c, radius: r, startAngle: 90,
-                        endAngle: 90 - 360 * min(max(a.frac, 0), 1), clockwise: true)
+            // 灰色已用区从12点顺时针增长；亮色剩余区接在它后面。
+            let remaining = min(max(a.frac, 0), 1)
+            p.appendArc(withCenter: c, radius: r,
+                        startAngle: 90 - 360 * (1 - remaining),
+                        endAngle: -270, clockwise: true)
             p.lineWidth = a.width
             p.lineCapStyle = .round
             if a.dashed {
@@ -673,7 +676,7 @@ final class NotchDetailCell: NSView {
         for track in [primaryTrack, secondaryTrack] {
             track.wantsLayer = true
             track.layer?.cornerRadius = 1.5
-            track.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
+            track.layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
         }
         for fill in [primaryFill, secondaryFill] {
             fill.wantsLayer = true
@@ -712,7 +715,7 @@ final class NotchDetailCell: NSView {
             primaryTrack.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
             primaryTrackWidth,
             primaryTrack.heightAnchor.constraint(equalToConstant: 3),
-            primaryFill.leadingAnchor.constraint(equalTo: primaryTrack.leadingAnchor),
+            primaryFill.trailingAnchor.constraint(equalTo: primaryTrack.trailingAnchor),
             primaryFill.centerYAnchor.constraint(equalTo: primaryTrack.centerYAnchor),
             primaryFill.heightAnchor.constraint(equalToConstant: 3),
             primaryWidth,
@@ -720,7 +723,7 @@ final class NotchDetailCell: NSView {
             secondaryTrack.topAnchor.constraint(equalTo: primaryTrack.bottomAnchor, constant: 3),
             secondaryTrackWidth,
             secondaryTrack.heightAnchor.constraint(equalToConstant: 2),
-            secondaryFill.leadingAnchor.constraint(equalTo: secondaryTrack.leadingAnchor),
+            secondaryFill.trailingAnchor.constraint(equalTo: secondaryTrack.trailingAnchor),
             secondaryFill.centerYAnchor.constraint(equalTo: secondaryTrack.centerYAnchor),
             secondaryFill.heightAnchor.constraint(equalToConstant: 2),
             secondaryWidth,
@@ -793,14 +796,16 @@ final class NotchDetailCell: NSView {
         }
         primaryTrack.isHidden = false
         primaryFill.isHidden = false
-        primaryWidth.constant = meterW * CGFloat(min(max(main.pct, 0), 100)) / 100
-        primaryFill.layer?.backgroundColor = (paceColor(main.tone) ?? pctColor(main.pct)).cgColor
+        primaryWidth.constant = meterW * main.remainingFraction
+        primaryFill.layer?.backgroundColor = (p.toneColor ?? pctColor(main.pct)).cgColor
         if let secondary = p.wins?.dropFirst().first {
             secondaryTrack.isHidden = false
             secondaryFill.isHidden = false
-            secondaryWidth.constant = meterW * CGFloat(min(max(secondary.pct, 0), 100)) / 100
+            secondaryWidth.constant = meterW * secondary.remainingFraction
+            let quota = secondary.label.hasPrefix("MCP")
             secondaryFill.layer?.backgroundColor =
-                (paceColor(secondary.tone) ?? pctColor(secondary.pct)).withAlphaComponent(0.72).cgColor
+                (paceColor(secondary.tone) ?? pctColor(secondary.pct))
+                    .withAlphaComponent(quota ? 0.6 : 0.75).cgColor
         } else {
             secondaryTrack.isHidden = true
             secondaryFill.isHidden = true
@@ -823,7 +828,7 @@ final class BarMeterView: NSView {
             track.fill()
             let fillW = max(0, rect.width * min(max(lane.frac, 0), 1))
             if fillW > 0 {
-                let fill = NSBezierPath(roundedRect: NSRect(x: rect.minX, y: rect.minY,
+                let fill = NSBezierPath(roundedRect: NSRect(x: rect.maxX - fillW, y: rect.minY,
                                                             width: fillW, height: rect.height),
                                         xRadius: lane.height / 2, yRadius: lane.height / 2)
                 lane.color.setFill()
@@ -870,12 +875,12 @@ final class BarCell: NSView {
                                              height: 5)]
             return
         }
-        var lanes = [BarMeterView.Lane(frac: w.pct / 100,
+        var lanes = [BarMeterView.Lane(frac: w.remainingFraction,
                                        color: p.toneColor ?? pctColor(w.pct),
                                        height: 5)]
         if let w2 = (p.wins ?? []).dropFirst().first {
             let quota = w2.label.hasPrefix("MCP")
-            lanes.append(BarMeterView.Lane(frac: w2.pct / 100,
+            lanes.append(BarMeterView.Lane(frac: w2.remainingFraction,
                                            color: (paceColor(w2.tone) ?? pctColor(w2.pct))
                                                .withAlphaComponent(quota ? 0.6 : 0.75),
                                            height: quota ? 2 : 3))
