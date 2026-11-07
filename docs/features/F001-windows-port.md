@@ -8,7 +8,10 @@ created: 2026-08-30
 
 # F001: Windows 适配 — 悬浮条 + Windows CI
 
-> Status: in-progress | Owner: 08mamba24
+> Status: stopped | Owner: 08mamba24
+
+2026-11-08：用户决定内网 Windows 改用 DSH 插件，本仓库不再演进 Windows 版本。
+现有实现与 CI 保留，AC-5 未验收，不再作为活动待办；不宣称真机验收通过。
 
 ## Why
 主力机器是 Mac,但同样的问题(哪个订阅还有余量)在 Windows 工作机上一样存在。
@@ -30,7 +33,7 @@ created: 2026-08-30
 - [x] AC-2: 悬浮条渲染所有有凭据的 provider,短名与着色和 macOS 版一致(单测锁定)
 - [x] AC-3: 交互:拖动、位置记忆、tooltip、右键菜单、自动刷新
 - [x] AC-4: GitHub Actions 在真实 Windows runner 上跑全部 Python 单测并通过
-- [ ] AC-5: 真实 Windows 机器人工验收(视觉/拖动/凭据拉通)— 待用户在 Windows 侧执行
+- [ ] AC-5: 真实 Windows 机器人工验收(视觉/拖动/凭据拉通)— 随 Windows 演进停止而取消推进
 
 ## Dependencies
 - Claude Code Windows 版将 OAuth 落盘为 `~/.claude/.credentials.json`(与 Linux 一致)
@@ -41,4 +44,4 @@ created: 2026-08-30
 - macOS 上 overrideredirect 窗口尺寸需显式 geometry(render 内已同时设 canvas 与窗口尺寸)
 
 ## Open Questions
-- 是否需要开机自启(任务计划程序)对齐 macOS launchd 自愈?等真实使用反馈再定
+- 开机自启不再评估：Windows 演进已停止。

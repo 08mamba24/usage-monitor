@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests/test_providers.py
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py'
 
 SDK15="$(xcrun --sdk macosx15.4 --show-sdk-path 2>/dev/null || true)"
 sed '/^let app = NSApplication.shared/,$d' UsageMonitor.swift \

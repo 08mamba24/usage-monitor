@@ -1,6 +1,6 @@
 # usage-monitor
 
-A native macOS always-on-top monitor showing usage across your AI subscriptions — Claude, Codex, Spark, Grok, Gemini, GLM, MiniMax, Qoder, DeepSeek — in one glance. On notched MacBooks, compact meters occupy the otherwise-unused menu-bar space immediately beside the camera.
+A native macOS always-on-top monitor showing usage across your AI subscriptions — Claude, Codex, Spark, Grok, Gemini, GLM, MiniMax, Qoder, CodeBuddy, DeepSeek — in one glance. On notched MacBooks, compact meters occupy the otherwise-unused menu-bar space immediately beside the camera.
 
 | List mode | Ring mode |
 |---|---|
@@ -15,14 +15,14 @@ Figuring out *"which AI should I use right now"* shouldn't be a query task — i
 - **Ambient, not an app.** Always-on-top vibrancy panel, no Dock icon, never steals focus, auto-refreshes, remembers its position and view mode. All chrome (title, clock, buttons) stays hidden until you hover — at rest it's nothing but the data. Like the menu-bar clock: always there, always current, never managed.
 - **Zero maintenance.** Credentials are reused from the CLIs you already log into; expired OAuth tokens refresh themselves. Install it, then forget it exists — except for the colors.
 
-**Eight subscriptions, one glance, zero maintenance.**
+**Your subscriptions, one glance.**
 
 ## Features
 
 - **Zero config**: reuses credentials your CLIs already saved (Claude Code keychain, `~/.codex/auth.json`, `~/.grok/auth.json`, `~/.gemini/oauth_creds.json`, opencode/hermes auth files). Providers without credentials are hidden automatically.
 - **Self-healing OAuth**: expired Codex / Grok / Gemini access tokens are silently refreshed via their refresh tokens and written back — no more re-running CLIs just to query usage.
 - **Pace coloring**: window color reflects burn rate vs. reset time (green = sustainable … red = will exhaust before reset), same algorithm as the Claude Code statusline.
-- **Three complementary views**, deliberately different: the **list** carries the numbers (exact percentages, reset countdowns, plan & quota fine print); the **ring strip** is a compact single-row, pure-graphic glance at your chosen 4 providers — arcs and pace colors only (outer = 5h window, inner = 7d/weekly, smallest = monthly MCP quota), hover for details; the **bar strip** mirrors the ring strip with stacked horizontal meters instead of arcs. Cycle them with the view-toggle button (`◔` list → `▤` ring → `☰` bar), and pick which providers fill the compact strips via the `⚙` menu (up to 4, Reset Default to restore); mode and window position persist.
+- **Three complementary views**, deliberately different: the **list** carries the numbers (exact percentages, reset countdowns, plan & quota fine print); the **ring strip** is a compact single-row, pure-graphic glance at your chosen 4 providers — arcs show **remaining quota** (full = unused, empty = exhausted), with pace colors still based on consumption. The outer arc is the main window, and the inner arc is weekly or MCP quota; hovering shows percentages explicitly marked `left`. The list and **bar strip** show used quota, with stacked horizontal meters in the bar strip. Cycle them with the view-toggle button (`◔` list → `▤` ring → `☰` bar), and pick which providers fill the compact strips via the `⚙` menu (up to 4, Reset Default to restore); mode and window position persist.
 - **Hover-only chrome**: at rest the panel is just rings/rows; hovering grows a title bar out of the top edge (content never moves) with the clock, the view-toggle (`◔` list → `▤` ring → `☰` bar), a `⚙` provider picker, refresh `↻`, and `✕` to hide the panel — it retracts when the mouse leaves. The app never quits on its own: `✕` only hides, and a small **menu-bar gauge** toggles the panel back; the launchd agent self-heals across crashes and logout.
 - **Notch-native layout**: on a notched MacBook, the default compact meters split around the camera as two frosted-glass wings (`NSVisualEffectView`, menu-bar material) with outer corners rounded and inner edges flush against the notch, so the pair reads as a single vibrancy island extending the hardware notch. Hovering either wing fuses it with a centered detail panel below into one continuous rounded rectangle (same frosted glass, width aligned to the wings' outer edges); the upper wings become a single-line toolbar (last update time plus refresh, source picker and hide actions) whose buttons stretch to fill the wing. With three or fewer providers, recent analysis or an inspiration card alternates in a full-width hero line above the detailed meters. Tight notch text uses `Ant` / `ZAI` aliases; detail rows omit reset slashes and align Claude's plan (`max 20x`) opposite its weekly window. Balance-only providers (DeepSeek) stack name / balance / today-spend vertically instead of overflowing. Lightweight local samples are retained for six hours only. The island re-snaps after display or scaling changes; displays without a notch keep the normal movable floating panel.
 - Native NSPanel + vibrancy, no Dock icon, auto-refresh every minute, `↻` for manual refresh, hover for details.
@@ -36,7 +36,9 @@ git clone https://github.com/08mamba24/usage-monitor && cd usage-monitor
 
 Requirements: macOS 13+, Xcode Command Line Tools (`xcode-select --install`). No other dependencies — plain `swiftc` + system Python 3.
 
-## Windows
+## Windows (frozen)
+
+Windows development stopped on 2026-11-08. The existing implementation is retained; new Windows features and the proposed Acrylic shell are no longer planned.
 
 A plain-Python compact alternative ships in the same repo: a draggable always-on-top strip — short name + usage + thin progress bar per provider, same pace colors as the macOS panel.
 
@@ -58,11 +60,14 @@ Requirements: Windows 10/11 + Python 3.9+ from python.org (tkinter included, no 
 | Gemini (Code Assist) | quota used | `~/.gemini/oauth_creds.json`, auto-refreshed |
 | GLM (z.ai coding plan) | 5h window, monthly MCP quota | `GLM_API_KEY` / opencode / hermes |
 | MiniMax coding plan | 5h + weekly windows | `MINIMAX_API_KEY` / opencode / hermes |
+| CodeBuddy (credits pool) | credits used % and combined remaining credits | CodeBuddy CLI session in `CodeBuddyExtension/Data/Public/auth/Tencent-Cloud.coding-copilot.info`; reopen the CLI when expired |
 | Qoder (credits pool) | credits used %, plan expiry | `QODER_PAT` (Qoder → Settings → Integrations → Personal Access Token) |
 | DeepSeek (prepaid) | balance + today's spend | `DEEPSEEK_API_KEY` / opencode |
 | Custom endpoint | any percentage or used-vs-total | `CUSTOM_USAGE_URL` (+ optional token / path / name) → env |
 
-API-key providers can be configured explicitly — see [`env.example`](env.example) → `~/.config/usage-monitor/env`. The custom-endpoint row is a catch-all for any local gateway or dashboard that exposes one JSON number: set `CUSTOM_USAGE_URL`, point `CUSTOM_USAGE_PATH` at a nested field holding either a 0–100 percentage or a `{"used", "total"}` pair, and it renders like any built-in subscription.
+API-key providers can be configured explicitly — see [`env.example`](env.example) → `~/.config/usage-monitor/env`. For BigModel accounts, set `GLM_BASE_URL=https://open.bigmodel.cn`; the default is `https://api.z.ai`. CodeBuddy reads its CLI session without refreshing or modifying it.
+
+The custom-endpoint row is a catch-all for any local gateway or dashboard that exposes one JSON number: set `CUSTOM_USAGE_URL`, point `CUSTOM_USAGE_PATH` at a nested field holding either a 0–100 percentage or a `{"used", "total"}` pair, and it renders like any built-in subscription.
 
 ## Privacy & security
 

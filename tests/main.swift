@@ -1,5 +1,34 @@
 import AppKit
 
+do {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("usage-monitor-lock-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let url = directory.appendingPathComponent("nested/instance.lock")
+    var owner = try? InstanceLock(at: url)
+    guard owner != nil else {
+        fputs("FAIL: instance lock should create its parent directory\n", stderr)
+        exit(1)
+    }
+    do {
+        _ = try InstanceLock(at: url)
+        fputs("FAIL: a second instance must not acquire the same lock\n", stderr)
+        exit(1)
+    } catch let error as NSError {
+        guard error.domain == NSPOSIXErrorDomain && error.code == Int(EWOULDBLOCK) else {
+            fputs("FAIL: lock contention must report EWOULDBLOCK\n", stderr)
+            exit(1)
+        }
+    }
+    owner = nil
+    guard let newOwner = try? InstanceLock(at: url) else {
+        fputs("FAIL: instance lock should be released with its owner\n", stderr)
+        exit(1)
+    }
+    withExtendedLifetime(newOwner) {}
+}
+print("PASS: instance lock creates its directory, rejects duplicates and releases")
+
 func waitMain(_ seconds: TimeInterval) {
     let until = Date().addingTimeInterval(seconds)
     while Date() < until {
@@ -121,6 +150,43 @@ guard ringProbe.fittingSize.height == MiniRingView.Metrics.size else {
     )
     exit(1)
 }
+
+// Exercise the real RingCell binding: pct remains used; both arcs show quota left.
+let remainingCell = RingCell(frame: .zero)
+let remainingRing = remainingCell.subviews.compactMap { $0 as? MiniRingView }.first!
+for (used, expected) in [(0.0, 1.0), (25, 0.75), (100, 0), (-5, 1), (130, 0)] {
+    let provider = Provider(
+        id: "glm", name: "GLM", kind: "percent", ok: true,
+        pct: used, value: "5h \(used)% /2h", detail: "MCP 60%",
+        tone: "red", wins: [
+            Win(label: "5h", pct: used, reset: "2h", tone: "red"),
+            Win(label: "MCP", pct: 60, reset: nil, tone: nil)], cval: nil)
+    remainingCell.apply(provider)
+    guard remainingRing.arcs.count == 2,
+          abs(remainingRing.arcs[0].frac - expected) < 0.0001,
+          abs(remainingRing.arcs[1].frac - 0.4) < 0.0001,
+          remainingRing.arcs[1].dashed,
+          remainingRing.arcs[0].color.isEqual(NSColor.systemRed) else {
+        fputs("FAIL: ring arcs should show remaining quota with original pace colors (used=\(used))\n", stderr)
+        exit(1)
+    }
+    let percentLeft = Int(round(expected * 100))
+    guard remainingCell.toolTip?.contains("5h \(percentLeft)% left") == true,
+          remainingCell.toolTip?.contains("MCP 40% left") == true else {
+        fputs("FAIL: ring tooltip should label both windows as remaining\n", stderr)
+        exit(1)
+    }
+}
+let unavailable = Provider(
+    id: "glm", name: "GLM", kind: "percent", ok: false,
+    pct: nil, value: "—", detail: "unavailable", tone: nil,
+    wins: [Win(label: "5h", pct: 0, reset: nil, tone: nil)], cval: nil)
+remainingCell.apply(unavailable)
+guard remainingRing.arcs.allSatisfy({ $0.frac == 0 }) else {
+    fputs("FAIL: unavailable quota must not appear as a full remaining ring\n", stderr)
+    exit(1)
+}
+print("PASS: ring arcs and tooltip show remaining quota, including zero and unavailable")
 
 let initialWindowCount = NSApplication.shared.windows.count
 let subject = App()
