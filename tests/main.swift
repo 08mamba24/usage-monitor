@@ -188,6 +188,180 @@ guard remainingRing.arcs.allSatisfy({ $0.frac == 0 }) else {
 }
 print("PASS: ring arcs and tooltip show remaining quota, including zero and unavailable")
 
+func renderedMeter(_ view: NSView) -> NSBitmapImageRep {
+    view.layoutSubtreeIfNeeded()
+    guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+        fatalError("meter should provide a bitmap for visual regression checks")
+    }
+    view.cacheDisplay(in: view.bounds, to: bitmap)
+    return bitmap
+}
+
+func colorfulness(_ color: NSColor) -> CGFloat {
+    guard let rgb = color.usingColorSpace(.deviceRGB) else { return 0 }
+    return max(rgb.redComponent, rgb.greenComponent, rgb.blueComponent)
+        - min(rgb.redComponent, rgb.greenComponent, rgb.blueComponent)
+}
+
+func meterPixel(_ bitmap: NSBitmapImageRep, x: CGFloat, y: CGFloat) -> NSColor {
+    // AppKit coordinates start at the lower left; bitmap rows start at the top.
+    bitmap.colorAt(x: Int(x * CGFloat(bitmap.pixelsWide)),
+                   y: Int((1 - y) * CGFloat(bitmap.pixelsHigh)))!
+}
+
+do {
+    let cell = RingCell(frame: NSRect(x: 0, y: 0, width: 22, height: 22))
+    let ring = cell.subviews.compactMap { $0 as? MiniRingView }.first!
+    cell.apply(Provider(
+        id: "claude", name: "Claude", kind: "percent", ok: true,
+        pct: 25, value: "5h 25% /2h", detail: "", tone: "green",
+        wins: [Win(label: "5h", pct: 25, reset: "2h", tone: "green")], cval: nil))
+    ring.frame = NSRect(x: 0, y: 0, width: 22, height: 22)
+    let bitmap = renderedMeter(ring)
+    let upperRight = meterPixel(bitmap, x: 0.8, y: 0.8)
+    let upperLeft = meterPixel(bitmap, x: 0.2, y: 0.8)
+    guard colorfulness(upperRight) < 0.12, colorfulness(upperLeft) > 0.2 else {
+        fputs("FAIL: 25% used ring should consume gray clockwise from noon (upper-right gray, upper-left bright)\n", stderr)
+        exit(1)
+    }
+}
+print("PASS: ring consumption grows clockwise from noon")
+
+func checkMeter(_ condition: @autoclosure () -> Bool, _ message: String) {
+    guard condition() else {
+        fputs("FAIL: \(message)\n", stderr)
+        exit(1)
+    }
+}
+
+func closeColor(_ actual: NSColor?, _ expected: NSColor) -> Bool {
+    guard let actual = actual?.usingColorSpace(.deviceRGB),
+          let expected = expected.usingColorSpace(.deviceRGB) else { return false }
+    return abs(actual.redComponent - expected.redComponent) < 0.02
+        && abs(actual.greenComponent - expected.greenComponent) < 0.02
+        && abs(actual.blueComponent - expected.blueComponent) < 0.02
+        && abs(actual.alphaComponent - expected.alphaComponent) < 0.02
+}
+
+func layerColor(_ view: NSView) -> NSColor? {
+    view.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) }
+}
+
+func meterProvider(_ used: Double, tone: String? = nil,
+                   secondary: Win? = nil) -> Provider {
+    Provider(id: "claude", name: "Claude", kind: "percent", ok: true,
+             pct: used, value: "5h \(Int(used))% /2h",
+             detail: secondary.map { "\($0.label) \(Int($0.pct))% /6d" } ?? "",
+             tone: tone,
+             wins: [Win(label: "5h", pct: used, reset: "2h", tone: "green")]
+                + (secondary.map { [$0] } ?? []), cval: nil)
+}
+
+do {
+    let compact = BarCell(frame: NSRect(x: 0, y: 0, width: 124, height: 30))
+    let meter = compact.subviews.compactMap { $0 as? BarMeterView }.first!
+    let row = RowView(frame: NSRect(x: 0, y: 0, width: 240, height: 50))
+    let rowMeters = row.subviews.filter { !($0 is NSTextField) }
+    let notch = NotchDetailCell(frame: NSRect(x: 0, y: 0, width: 112, height: 46))
+    let notchMeters = notch.subviews.filter { !($0 is NSTextField) }
+    checkMeter(rowMeters.count == 2 && notchMeters.count == 4,
+               "detail views should expose their actual track and fill subviews")
+
+    for (used, remaining, rowWidth, notchWidth) in [
+        (0.0, 1.0, 240.0, 96.0), (25, 0.75, 180, 72), (100, 0, 0, 0)
+    ] {
+        let provider = meterProvider(used)
+        compact.apply(provider)
+        row.apply(provider, totalWidth: 240)
+        notch.apply(provider, width: 112, balanceOnly: false)
+        row.layoutSubtreeIfNeeded()
+        notch.layoutSubtreeIfNeeded()
+        checkMeter(abs(meter.lanes[0].frac - remaining) < 0.0001,
+                   "compact bar should bind remaining quota (used=\(used))")
+        for (track, fill, expectedWidth) in [
+            (rowMeters[0], rowMeters[1], rowWidth),
+            (notchMeters[0], notchMeters[1], notchWidth)
+        ] {
+            checkMeter(abs(fill.frame.width - expectedWidth) < 0.01
+                       && abs(fill.frame.maxX - track.frame.maxX) < 0.01,
+                       "detail bar should leave consumed space gray on the left (used=\(used))")
+        }
+        let bitmap = renderedMeter(meter)
+        let left = colorfulness(meterPixel(bitmap, x: 0.1, y: 3.5 / 13))
+        let right = colorfulness(meterPixel(bitmap, x: 0.8, y: 3.5 / 13))
+        checkMeter((used == 0 ? left > 0.2 : left < 0.12)
+                   && (used == 100 ? right < 0.12 : right > 0.2),
+                   "compact bar should paint gray consumption from left to right (used=\(used))")
+        checkMeter(row.subviews.compactMap { $0 as? NSTextField }
+                    .contains { $0.stringValue == provider.value },
+                   "list number should continue to report the used percentage")
+        checkMeter(notch.subviews.compactMap { $0 as? NSTextField }
+                    .contains { $0.stringValue == notchDetailValue(provider) },
+                   "notch number should continue to report the used percentage")
+    }
+
+    row.apply(unavailable, totalWidth: 240)
+    notch.apply(unavailable, width: 112, balanceOnly: false)
+    compact.apply(unavailable)
+    row.layoutSubtreeIfNeeded()
+    notch.layoutSubtreeIfNeeded()
+    checkMeter(rowMeters[1].isHidden || rowMeters[1].frame.width == 0,
+               "unavailable list quota must not paint a bright remaining bar")
+    checkMeter(notchMeters[1].isHidden || notchMeters[1].frame.width == 0,
+               "unavailable notch quota must not paint a bright remaining bar")
+    checkMeter(meter.lanes.allSatisfy { $0.frac == 0 },
+               "unavailable compact quota must not paint a bright remaining bar")
+}
+print("PASS: all horizontal meter views show right-aligned remaining quota")
+
+do {
+    let ringCell = RingCell(frame: .zero)
+    let ring = ringCell.subviews.compactMap { $0 as? MiniRingView }.first!
+    let bar = BarCell(frame: .zero)
+    let meter = bar.subviews.compactMap { $0 as? BarMeterView }.first!
+    let row = RowView(frame: NSRect(x: 0, y: 0, width: 240, height: 50))
+    let rowFill = row.subviews.filter { !($0 is NSTextField) }[1]
+    let notch = NotchDetailCell(frame: NSRect(x: 0, y: 0, width: 112, height: 46))
+    let notchMeters = notch.subviews.filter { !($0 is NSTextField) }
+    let cases: [(Double, String?, NSColor)] = [
+        (25, "red", .systemRed), (15, nil, .systemGreen),
+        (55, nil, .systemYellow), (75, nil, .systemOrange), (95, nil, .systemRed)
+    ]
+    for (used, tone, expected) in cases {
+        let provider = meterProvider(used, tone: tone)
+        ringCell.apply(provider)
+        bar.apply(provider)
+        row.apply(provider, totalWidth: 240)
+        notch.apply(provider, width: 112, balanceOnly: false)
+        checkMeter(closeColor(ring.arcs[0].color, expected)
+                   && closeColor(meter.lanes[0].color, expected)
+                   && closeColor(layerColor(rowFill), expected)
+                   && closeColor(layerColor(notchMeters[1]), expected),
+                   "all primary bars should match ring pace override and fallback palette (used=\(used))")
+    }
+    for (secondary, expectedColor) in [
+        (Win(label: "7d", pct: 80, reset: "6d", tone: "yellow"),
+         NSColor.systemYellow.withAlphaComponent(0.75)),
+        (Win(label: "MCP", pct: 80, reset: nil, tone: nil),
+         NSColor.systemOrange.withAlphaComponent(0.6))
+    ] {
+        let provider = meterProvider(25, secondary: secondary)
+        ringCell.apply(provider)
+        bar.apply(provider)
+        notch.apply(provider, width: 112, balanceOnly: false)
+        notch.layoutSubtreeIfNeeded()
+        checkMeter(closeColor(ring.arcs[1].color, expectedColor)
+                   && closeColor(meter.lanes[1].color, expectedColor)
+                   && closeColor(layerColor(notchMeters[3]), expectedColor),
+                   "secondary bars should preserve ring weekly/MCP palette and opacity")
+        checkMeter(abs(meter.lanes[1].frac - 0.2) < 0.0001
+                   && abs(notchMeters[3].frame.width - 19.2) <= 0.5
+                   && abs(notchMeters[3].frame.maxX - notchMeters[2].frame.maxX) < 0.01,
+                   "secondary bars should also consume left-to-right and retain quota on the right (lane=\(meter.lanes[1].frac), track=\(notchMeters[2].frame), fill=\(notchMeters[3].frame))")
+    }
+}
+print("PASS: primary and secondary meters share ring pace colors and quota opacity")
+
 let initialWindowCount = NSApplication.shared.windows.count
 let subject = App()
 let createdWindowCount = NSApplication.shared.windows.count - initialWindowCount
