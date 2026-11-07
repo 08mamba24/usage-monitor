@@ -33,11 +33,12 @@ WEEK = 7 * 24 * 3600 * 1000
 def load_env():
     env = {}
     if os.path.exists(CONF):
-        for line in open(CONF):
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                env[k.strip()] = v.strip()
+        with open(CONF) as env_file:
+            for line in env_file:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    env[k.strip()] = v.strip()
     return env
 
 
