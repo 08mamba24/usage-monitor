@@ -82,8 +82,49 @@ func notchCompactName(_ provider: Provider) -> String {
     }
 }
 
+func remainingWindowText(_ window: Win, compact: Bool = false) -> String {
+    let percent = Int(round(window.remainingFraction * 100))
+    let reset = window.reset.map { compact ? " \($0)" : " /\($0)" } ?? ""
+    let label = window.label == "cr" ? "" : "\(window.label) "
+    return "\(label)\(percent)%\(reset)"
+}
+
+// 只转换展示文字，保留采集数据的已用口径供速度、配色和历史采样使用。
+func quotaDisplayValue(_ provider: Provider, compact: Bool = false) -> String {
+    guard provider.ok, provider.kind == "percent" else { return provider.value }
+    if let main = provider.wins?.first {
+        return remainingWindowText(main, compact: compact)
+    }
+    guard let used = provider.pct else { return "—" }
+    let percent = Int(round(100 - min(max(used, 0), 100)))
+    return "\(percent)%"
+}
+
+func quotaDisplayDetail(_ provider: Provider) -> String {
+    guard provider.ok, provider.kind == "percent" else { return provider.detail }
+    var parts = provider.detail.isEmpty ? [] : provider.detail.components(separatedBy: " · ")
+    for window in (provider.wins ?? []).dropFirst() {
+        let remaining = remainingWindowText(window)
+        // MCP 的原文可能是计数形式 MCP/mo 278/1000；以结构化窗口的剩余百分比替换。
+        if let index = parts.firstIndex(where: {
+            $0.hasPrefix(window.label + " ") || $0.hasPrefix(window.label + "/")
+        }) {
+            parts[index] = remaining
+        } else {
+            parts.append(remaining)
+        }
+    }
+    return parts.joined(separator: " · ")
+}
+
+func quotaTooltip(_ provider: Provider) -> String {
+    let detail = quotaDisplayDetail(provider)
+    return "\(provider.name)  \(quotaDisplayValue(provider))"
+        + (detail.isEmpty ? "" : " · \(detail)")
+}
+
 func notchDetailValue(_ provider: Provider) -> String {
-    provider.value.replacingOccurrences(of: " /", with: " ")
+    quotaDisplayValue(provider, compact: true).replacingOccurrences(of: " /", with: " ")
 }
 
 struct NotchDetailSecondaryText {
@@ -96,7 +137,12 @@ func notchDetailSecondary(_ provider: Provider) -> NotchDetailSecondaryText {
     guard let first = parts.first else {
         return NotchDetailSecondaryText(leading: "", trailing: "")
     }
-    let usage = first.replacingOccurrences(of: " /", with: " ")
+    let usage: String
+    if provider.ok, provider.kind == "percent", let secondary = provider.wins?.dropFirst().first {
+        usage = remainingWindowText(secondary, compact: true)
+    } else {
+        usage = first.replacingOccurrences(of: " /", with: " ")
+    }
     guard provider.id == "claude" else {
         return NotchDetailSecondaryText(leading: usage, trailing: "")
     }
@@ -197,21 +243,23 @@ final class RowView: NSView {
 
     func apply(_ p: Provider, totalWidth: CGFloat) {
         nameLabel.stringValue = p.name
+        let displayValue = quotaDisplayValue(p)
+        toolTip = quotaTooltip(p)
         // 主值与倒计时分两种字体格式: 主值粗体, 倒计时小号浅色
         // 烧得快 (orange/red) 时主值文字也跟着变色
         var mainColor: NSColor = p.ok ? .labelColor : .tertiaryLabelColor
         if p.tone == "orange" || p.tone == "red", let c = p.toneColor { mainColor = c }
-        if let r = p.value.range(of: " /") {
+        if let r = displayValue.range(of: " /") {
             let attr = NSMutableAttributedString()
-            attr.append(NSAttributedString(string: String(p.value[..<r.lowerBound]), attributes: [
+            attr.append(NSAttributedString(string: String(displayValue[..<r.lowerBound]), attributes: [
                 .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
                 .foregroundColor: mainColor]))
-            attr.append(NSAttributedString(string: String(p.value[r.lowerBound...]), attributes: [
+            attr.append(NSAttributedString(string: String(displayValue[r.lowerBound...]), attributes: [
                 .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular),
                 .foregroundColor: NSColor.secondaryLabelColor]))
             valueLabel.attributedStringValue = attr
         } else {
-            valueLabel.stringValue = p.value
+            valueLabel.stringValue = displayValue
             valueLabel.textColor = mainColor
         }
         // 次行统一走 attributed 渲染 (vibrancy 下与 textColor 路径底色不同, 混用会深浅不一);
@@ -221,7 +269,7 @@ final class RowView: NSView {
         let gray = { (s: String) in NSAttributedString(string: s, attributes: [
             .font: NSFont.systemFont(ofSize: 10),
             .foregroundColor: NSColor.tertiaryLabelColor]) }
-        for (i, seg) in p.detail.components(separatedBy: " · ").enumerated() {
+        for (i, seg) in quotaDisplayDetail(p).components(separatedBy: " · ").enumerated() {
             if i > 0 { attr.append(gray(" · ")) }
             let parts = seg.split(separator: " ", maxSplits: 2,
                                   omittingEmptySubsequences: false).map(String.init)
@@ -388,7 +436,7 @@ final class RingCell: NSView {
     func apply(_ p: Provider) {
         normalLabel = shortLabel(p)
         hoverText = ""
-        toolTip = "\(p.name)  \(p.value)" + (p.detail.isEmpty ? "" : " · \(p.detail)")
+        toolTip = quotaTooltip(p)
         guard p.ok, let w = p.wins?.first else {
             ring.arcs = [MiniRingView.Arc(frac: 0, color: .clear,
                                           width: MiniRingView.Metrics.outerWidth,
@@ -413,8 +461,6 @@ final class RingCell: NSView {
         // 紧凑悬停框追加补充行 (如 Claude 的美元超额 $6.1k/20k)
         if let cv = p.cval, !cv.isEmpty { hoverRows.append(cv) }
         hoverText = hoverRows.joined(separator: "\n")
-        toolTip = "\(p.name)  \(hoverRows.joined(separator: " · "))\nUsed: \(p.value)"
-            + (p.detail.isEmpty ? "" : " · \(p.detail)")
         ring.arcs = arcs
         setRingHover(hoveringRing)
     }
@@ -452,8 +498,7 @@ final class RingCell: NSView {
     }
 
     private func winAbbrev(_ w: Win) -> String {
-        "\(w.label) \(Int(round(w.remainingFraction * 100)))% left"
-            + (w.reset.map { " /\($0)" } ?? "")
+        remainingWindowText(w)
     }
 
     private func shortLabel(_ p: Provider) -> String {
@@ -501,8 +546,8 @@ final class BalanceCell: NSView {
 
     func apply(_ p: Provider) {
         // 余额类紧凑 pill: 有 cval (今日消耗) 优先, 否则退回总余额
-        label.stringValue = "\(shortLabel(p)) \(p.cval ?? compactValue(p.value))"
-        toolTip = "\(p.name)  \(p.value)" + (p.detail.isEmpty ? "" : " · \(p.detail)")
+        label.stringValue = "\(shortLabel(p)) \(p.cval ?? compactValue(quotaDisplayValue(p)))"
+        toolTip = quotaTooltip(p)
     }
 
     private func compactValue(_ s: String) -> String {
@@ -755,7 +800,7 @@ final class NotchDetailCell: NSView {
         detailFullTrailing.isActive = !splitsSecondary
         detailSplitTrailing.isActive = splitsSecondary
         secondaryDetailLabel.isHidden = !splitsSecondary
-        toolTip = "\(p.name)  \(p.value)" + (p.detail.isEmpty ? "" : " · \(p.detail)")
+        toolTip = quotaTooltip(p)
 
         nameLabel.isHidden = false
         detailLabel.isHidden = balanceOnly && compactBalanceDetail.isEmpty
@@ -764,8 +809,19 @@ final class NotchDetailCell: NSView {
         primaryTrack.isHidden = balanceOnly
         primaryFill.isHidden = balanceOnly
         valueLabel.alignment = balanceOnly ? .left : .right
-        valueLabel.font = .monospacedDigitSystemFont(
-            ofSize: balanceOnly ? 9.5 : 9, weight: .semibold)
+        var valueFontSize: CGFloat = balanceOnly ? 9.5 : 9
+        if !balanceOnly {
+            // 剩余百分比可能多一位数字；窄列优先保留服务名、百分比与倒计时。
+            let available = max(0, width - 16 - 5 - nameLabel.intrinsicContentSize.width)
+            while valueFontSize > 7.5 {
+                let font = NSFont.monospacedDigitSystemFont(ofSize: valueFontSize, weight: .semibold)
+                if (valueLabel.stringValue as NSString).size(withAttributes: [.font: font]).width <= available {
+                    break
+                }
+                valueFontSize -= 0.5
+            }
+        }
+        valueLabel.font = .monospacedDigitSystemFont(ofSize: valueFontSize, weight: .semibold)
         if balanceOnly {
             valueBalanceLeading.isActive = true
             valueDetailBaseline.isActive = true
@@ -868,7 +924,7 @@ final class BarCell: NSView {
     func apply(_ p: Provider) {
         nameLabel.stringValue = String(p.name.prefix(3))
         nameLabel.textColor = p.ok ? .labelColor : .tertiaryLabelColor
-        toolTip = "\(p.name)  \(p.value)" + (p.detail.isEmpty ? "" : " · \(p.detail)")
+        toolTip = quotaTooltip(p)
         guard p.ok, let w = p.wins?.first else {
             meter.lanes = [BarMeterView.Lane(frac: p.ok ? 1 : 0,
                                              color: NSColor.secondaryLabelColor.withAlphaComponent(0.45),
