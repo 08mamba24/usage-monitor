@@ -386,38 +386,42 @@ func visibleMeterLabels(_ view: NSView) -> [String] {
 do {
     // Real window layout includes NSTextField alignment insets absent from frame-only probes.
     for (id, name, alias) in [("claude", "Claude", "Ant"), ("glm", "GLM", "ZAI"),
-                              ("codex", "Codex", "Codex")] {
-        let host = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 103.5, height: 46),
-                            styleMask: .borderless, backing: .buffered, defer: false)
-        host.isReleasedWhenClosed = false
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: 103.5, height: 46))
-        host.contentView = content
-        let cell = NotchDetailCell(frame: .zero)
-        cell.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(cell)
-        NSLayoutConstraint.activate([
-            cell.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            cell.topAnchor.constraint(equalTo: content.topAnchor)
-        ])
-        cell.apply(Provider(
-            id: id, name: name, kind: "percent", ok: true,
-            pct: 14, value: "5h 14% /2.5h", detail: "7d 3% /6d · max 20x",
-            tone: nil, wins: [Win(label: "5h", pct: 14, reset: "2.5h", tone: nil),
-                              Win(label: "7d", pct: 3, reset: "6d", tone: nil)], cval: nil),
-            width: 103.5, balanceOnly: false)
-        content.layoutSubtreeIfNeeded()
-        let labels = cell.subviews.compactMap { $0 as? NSTextField }
-        let nameField = labels.first { $0.stringValue == alias }!
-        let valueField = labels.first { $0.stringValue == "5h 86% 2.5h" }!
-        for field in [nameField, valueField] {
-            let textWidth = field.stringValue.size(withAttributes: [.font: field.font!]).width
-            checkMeter(field.alignmentRect(forFrame: field.frame).width + 0.5 >= textWidth,
-                       "hosted 103.5pt notch must fit the complete \(alias) name, remaining percentage and reset")
+                              ("codex", "Codex", "Codex"), ("minimax", "MiniMax", "MiniMax")] {
+        for (used, left) in [(0.0, 100), (14, 86), (100, 0)] {
+            let host = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 103.5, height: 46),
+                                styleMask: .borderless, backing: .buffered, defer: false)
+            host.isReleasedWhenClosed = false
+            let content = NSView(frame: NSRect(x: 0, y: 0, width: 103.5, height: 46))
+            host.contentView = content
+            let cell = NotchDetailCell(frame: .zero)
+            cell.translatesAutoresizingMaskIntoConstraints = false
+            content.addSubview(cell)
+            NSLayoutConstraint.activate([
+                cell.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+                cell.topAnchor.constraint(equalTo: content.topAnchor)
+            ])
+            cell.apply(Provider(
+                id: id, name: name, kind: "percent", ok: true,
+                pct: used, value: "5h \(Int(used))% /2.5h", detail: "7d 3% /6d · max 20x",
+                tone: nil, wins: [Win(label: "5h", pct: used, reset: "2.5h", tone: nil),
+                                  Win(label: "7d", pct: 3, reset: "6d", tone: nil)], cval: nil),
+                width: 103.5, balanceOnly: false)
+            content.layoutSubtreeIfNeeded()
+            let labels = cell.subviews.compactMap { $0 as? NSTextField }
+            let nameField = labels.first { $0.stringValue == alias }!
+            let valueField = labels.first { $0.stringValue == "5h \(left)% 2.5h" }!
+            checkMeter(valueField.font!.pointSize >= 7.5,
+                       "narrow notch values must remain legible rather than shrink below 7.5pt")
+            for field in [nameField, valueField] {
+                let textWidth = field.stringValue.size(withAttributes: [.font: field.font!]).width
+                checkMeter(field.alignmentRect(forFrame: field.frame).width + 0.5 >= textWidth,
+                           "hosted 103.5pt notch must fit the complete \(alias) name, remaining \(left)% and reset")
+            }
+            checkMeter(valueField.alignmentRect(forFrame: valueField.frame).minX
+                       >= nameField.alignmentRect(forFrame: nameField.frame).maxX + 4.5,
+                       "hosted notch name and remaining value must retain their logical gap")
+            host.close()
         }
-        checkMeter(valueField.alignmentRect(forFrame: valueField.frame).minX
-                   >= nameField.alignmentRect(forFrame: nameField.frame).maxX + 4.5,
-                   "hosted notch name and remaining value must retain their logical gap")
-        host.close()
     }
 }
 print("PASS: hosted narrow notch preserves full names, remaining percentages and reset times")
@@ -473,6 +477,29 @@ do {
         checkMeter(tip.contains("86%") && tip.contains("40%")
                    && !tip.contains("14%") && !tip.contains("60%"),
                    "MCP native tooltips should not retain used percentages")
+    }
+
+    for (rawDetail, secondaryUsed, displayDetail) in [
+        ("pro · MCP/mo 278/1000", 28.0, "pro · MCP/mo 278/1000"),
+        ("pro · MCP/mo 60%", 60, "pro · MCP/mo 40%")
+    ] {
+        let glm = Provider(
+            id: "glm", name: "GLM", kind: "percent", ok: true,
+            pct: 14, value: "5h 14% /2.5h", detail: rawDetail,
+            tone: nil, wins: [Win(label: "5h", pct: 14, reset: "2.5h", tone: nil),
+                              Win(label: "MCP", pct: secondaryUsed, reset: nil, tone: nil)], cval: nil)
+        row.apply(glm, totalWidth: 240)
+        notch.apply(glm, width: 112, balanceOnly: false)
+        compact.apply(glm)
+        ring.apply(glm)
+        checkMeter(visibleMeterLabels(row).contains(displayDetail),
+                   "GLM detail must preserve MCP/mo counts and monthly labels, converting only percentage numbers")
+        checkMeter(visibleMeterLabels(notch).contains("pro"),
+                   "expanded GLM should retain its original leading plan metadata")
+        for view in [row, notch, compact, ring] as [NSView] {
+            checkMeter(view.toolTip?.contains(displayDetail) == true,
+                       "native GLM tooltips must retain exact MCP/mo counter or percentage format")
+        }
     }
 
     let credits = Provider(

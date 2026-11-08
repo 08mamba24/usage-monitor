@@ -102,19 +102,28 @@ func quotaDisplayValue(_ provider: Provider, compact: Bool = false) -> String {
 
 func quotaDisplayDetail(_ provider: Provider) -> String {
     guard provider.ok, provider.kind == "percent" else { return provider.detail }
-    var parts = provider.detail.isEmpty ? [] : provider.detail.components(separatedBy: " · ")
-    for window in (provider.wins ?? []).dropFirst() {
-        let remaining = remainingWindowText(window)
-        // MCP 的原文可能是计数形式 MCP/mo 278/1000；以结构化窗口的剩余百分比替换。
-        if let index = parts.firstIndex(where: {
-            $0.hasPrefix(window.label + " ") || $0.hasPrefix(window.label + "/")
-        }) {
-            parts[index] = remaining
-        } else {
-            parts.append(remaining)
+    return provider.detail.components(separatedBy: " · ").map { segment in
+        for window in (provider.wins ?? []).dropFirst() {
+            if let remaining = remainingPercentageSegment(segment, window: window) {
+                return remaining
+            }
         }
-    }
-    return parts.joined(separator: " · ")
+        return segment
+    }.joined(separator: " · ")
+}
+
+func remainingPercentageSegment(_ segment: String, window: Win, compact: Bool = false) -> String? {
+    guard let space = segment.firstIndex(of: " ") else { return nil }
+    let label = String(segment[..<space])
+    guard label == window.label || label.hasPrefix(window.label + "/") else { return nil }
+    let start = segment.index(after: space)
+    let end = segment[start...].firstIndex(of: " ") ?? segment.endIndex
+    let token = segment[start..<end]
+    // 只替换原有百分比，保留 MCP/mo、计数、倒计时及其他元信息。
+    guard token.hasSuffix("%"), Double(token.dropLast()) != nil else { return nil }
+    let percent = Int(round(window.remainingFraction * 100))
+    let result = String(segment[..<start]) + "\(percent)%" + String(segment[end...])
+    return compact ? result.replacingOccurrences(of: " /", with: " ") : result
 }
 
 func quotaTooltip(_ provider: Provider) -> String {
@@ -137,11 +146,14 @@ func notchDetailSecondary(_ provider: Provider) -> NotchDetailSecondaryText {
     guard let first = parts.first else {
         return NotchDetailSecondaryText(leading: "", trailing: "")
     }
-    let usage: String
-    if provider.ok, provider.kind == "percent", let secondary = provider.wins?.dropFirst().first {
-        usage = remainingWindowText(secondary, compact: true)
-    } else {
-        usage = first.replacingOccurrences(of: " /", with: " ")
+    var usage = first.replacingOccurrences(of: " /", with: " ")
+    if provider.ok, provider.kind == "percent" {
+        for secondary in (provider.wins ?? []).dropFirst() {
+            if let remaining = remainingPercentageSegment(first, window: secondary, compact: true) {
+                usage = remaining
+                break
+            }
+        }
     }
     guard provider.id == "claude" else {
         return NotchDetailSecondaryText(leading: usage, trailing: "")
@@ -810,6 +822,7 @@ final class NotchDetailCell: NSView {
         primaryFill.isHidden = balanceOnly
         valueLabel.alignment = balanceOnly ? .left : .right
         var valueFontSize: CGFloat = balanceOnly ? 9.5 : 9
+        var valueFont = NSFont.monospacedDigitSystemFont(ofSize: valueFontSize, weight: .semibold)
         if !balanceOnly {
             // 剩余百分比可能多一位数字；窄列优先保留服务名、百分比与倒计时。
             let available = max(0, width - 16 - 5 - nameLabel.intrinsicContentSize.width)
@@ -820,8 +833,16 @@ final class NotchDetailCell: NSView {
                 }
                 valueFontSize -= 0.5
             }
+            valueFont = .monospacedDigitSystemFont(ofSize: valueFontSize, weight: .semibold)
+            // 100% 或较长服务名仍放不下时，保持字高并选用系统窄体。
+            for fontWidth: NSFont.Width in [.condensed, .compressed] {
+                if (valueLabel.stringValue as NSString).size(withAttributes: [.font: valueFont]).width <= available {
+                    break
+                }
+                valueFont = .systemFont(ofSize: valueFontSize, weight: .semibold, width: fontWidth)
+            }
         }
-        valueLabel.font = .monospacedDigitSystemFont(ofSize: valueFontSize, weight: .semibold)
+        valueLabel.font = valueFont
         if balanceOnly {
             valueBalanceLeading.isActive = true
             valueDetailBaseline.isActive = true
