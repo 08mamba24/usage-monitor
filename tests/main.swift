@@ -66,13 +66,14 @@ do {
 let compactClaude = Provider(
     id: "claude", name: "Claude", kind: "percent", ok: true,
     pct: 2, value: "5h 2% /2.5h", detail: "7d 3% /6d · max 20x",
-    tone: nil, wins: nil, cval: nil)
+    tone: nil, wins: [Win(label: "5h", pct: 2, reset: "2.5h", tone: nil),
+                      Win(label: "7d", pct: 3, reset: "6d", tone: nil)], cval: nil)
 guard notchCompactName(compactClaude) == "Ant" else {
     fputs("FAIL: compact Claude name should be Ant\n", stderr)
     exit(1)
 }
-guard notchDetailValue(compactClaude) == "5h 2% 2.5h" else {
-    fputs("FAIL: compact reset time should not include a slash\n", stderr)
+guard notchDetailValue(compactClaude) == "5h 98% 2.5h" else {
+    fputs("FAIL: compact percentage should show remaining quota and omit reset slash\n", stderr)
     exit(1)
 }
 let compactClaudeSecondary = notchDetailSecondary(compactClaude)
@@ -80,7 +81,7 @@ guard compactClaudeSecondary.leading == "max 20x" else {
     fputs("FAIL: compact Claude plan should be left aligned\n", stderr)
     exit(1)
 }
-guard compactClaudeSecondary.trailing == "7d 3% 6d" else {
+guard compactClaudeSecondary.trailing == "7d 97% 6d" else {
     fputs("FAIL: compact Claude weekly reset should be right aligned\n", stderr)
     exit(1)
 }
@@ -93,16 +94,29 @@ guard compactClaudeLabels.contains(where: { $0.stringValue == "Ant" }) else {
     fputs("FAIL: compact Claude cell should show the short name (Ant)\n", stderr)
     exit(1)
 }
+guard let mainLabel = compactClaudeLabels.first(where: { $0.stringValue == "5h 98% 2.5h" }),
+      let nameLabel = compactClaudeLabels.first(where: { $0.stringValue == "Ant" }),
+      mainLabel.frame.minX >= nameLabel.frame.maxX + 0.5,
+      mainLabel.frame.width + 0.5 >= mainLabel.stringValue.size(
+        withAttributes: [.font: mainLabel.font!]).width else {
+    fputs("FAIL: narrow notch must keep its remaining percentage readable beside the provider name\n", stderr)
+    exit(1)
+}
 guard let planLabel = compactClaudeLabels.first(where: { $0.stringValue == "max 20x" }),
-      let weeklyLabel = compactClaudeLabels.first(where: { $0.stringValue == "7d 3% 6d" }),
-      planLabel.frame.maxX + 5 <= weeklyLabel.frame.minX else {
+      let weeklyLabel = compactClaudeLabels.first(where: { $0.stringValue == "7d 97% 6d" }),
+      planLabel.frame.maxX + 5 <= weeklyLabel.frame.minX,
+      planLabel.frame.width + 0.5 >= planLabel.stringValue.size(
+        withAttributes: [.font: planLabel.font!]).width,
+      weeklyLabel.frame.width + 0.5 >= weeklyLabel.stringValue.size(
+        withAttributes: [.font: weeklyLabel.font!]).width else {
     fputs("FAIL: compact Claude plan and weekly reset should not overlap\n", stderr)
     exit(1)
 }
 
 let compactGLM = Provider(
     id: "glm", name: "GLM", kind: "percent", ok: true,
-    pct: 0, value: "5h 0% /4.2h", detail: "", tone: nil, wins: nil, cval: nil)
+    pct: 0, value: "5h 0% /4.2h", detail: "", tone: nil,
+    wins: [Win(label: "5h", pct: 0, reset: "4.2h", tone: nil)], cval: nil)
 guard notchCompactName(compactGLM) == "ZAI" else {
     fputs("FAIL: compact GLM name should be ZAI\n", stderr)
     exit(1)
@@ -120,8 +134,9 @@ guard compactGLMCell.subviews.compactMap({ $0 as? NSTextField })
 let compactCodex = Provider(
     id: "codex", name: "Codex", kind: "percent", ok: true,
     pct: 4, value: "5h 4% /2.5h", detail: "7d 4% /6d · plus",
-    tone: nil, wins: nil, cval: nil)
-guard notchDetailSecondary(compactCodex).leading == "7d 4% 6d" else {
+    tone: nil, wins: [Win(label: "5h", pct: 4, reset: "2.5h", tone: nil),
+                      Win(label: "7d", pct: 4, reset: "6d", tone: nil)], cval: nil)
+guard notchDetailSecondary(compactCodex).leading == "7d 96% 6d" else {
     fputs("FAIL: compact non-Claude reset time should not include a slash\n", stderr)
     exit(1)
 }
@@ -129,12 +144,13 @@ guard notchDetailSecondary(compactCodex).leading == "7d 4% 6d" else {
 let compactSpark = Provider(
     id: "spark", name: "Spark", kind: "percent", ok: true,
     pct: 15, value: "5h 15% /2.5h", detail: "7d 7% /6d",
-    tone: nil, wins: nil, cval: nil)
+    tone: nil, wins: [Win(label: "5h", pct: 15, reset: "2.5h", tone: nil),
+                      Win(label: "7d", pct: 7, reset: "6d", tone: nil)], cval: nil)
 guard notchCompactName(compactSpark) == "Spark" else {
     fputs("FAIL: compact Spark name should stay Spark\n", stderr)
     exit(1)
 }
-guard notchDetailSecondary(compactSpark).leading == "7d 7% 6d" else {
+guard notchDetailSecondary(compactSpark).leading == "7d 93% 6d" else {
     fputs("FAIL: compact Spark reset time should not include a slash\n", stderr)
     exit(1)
 }
@@ -171,8 +187,9 @@ for (used, expected) in [(0.0, 1.0), (25, 0.75), (100, 0), (-5, 1), (130, 0)] {
         exit(1)
     }
     let percentLeft = Int(round(expected * 100))
-    guard remainingCell.toolTip?.contains("5h \(percentLeft)% left") == true,
-          remainingCell.toolTip?.contains("MCP 40% left") == true else {
+    guard remainingCell.toolTip?.contains("5h \(percentLeft)%") == true,
+          remainingCell.toolTip?.contains("MCP 40%") == true,
+          remainingCell.toolTip?.contains("Used:") == false else {
         fputs("FAIL: ring tooltip should label both windows as remaining\n", stderr)
         exit(1)
     }
@@ -293,11 +310,11 @@ do {
                    && (used == 100 ? right < 0.12 : right > 0.2),
                    "compact bar should paint gray consumption from left to right (used=\(used))")
         checkMeter(row.subviews.compactMap { $0 as? NSTextField }
-                    .contains { $0.stringValue == provider.value },
-                   "list number should continue to report the used percentage")
+                    .contains { $0.stringValue == "5h \(Int(remaining * 100))% /2h" },
+                   "list percentage should agree with the remaining bar")
         checkMeter(notch.subviews.compactMap { $0 as? NSTextField }
-                    .contains { $0.stringValue == notchDetailValue(provider) },
-                   "notch number should continue to report the used percentage")
+                    .contains { $0.stringValue == "5h \(Int(remaining * 100))% 2h" },
+                   "notch percentage should agree with the remaining bar")
     }
 
     row.apply(unavailable, totalWidth: 240)
@@ -361,6 +378,181 @@ do {
     }
 }
 print("PASS: primary and secondary meters share ring pace colors and quota opacity")
+
+func visibleMeterLabels(_ view: NSView) -> [String] {
+    view.subviews.filter { !$0.isHidden }.compactMap { ($0 as? NSTextField)?.stringValue }
+}
+
+do {
+    // Real window layout includes NSTextField alignment insets absent from frame-only probes.
+    for (id, name, alias) in [("claude", "Claude", "Ant"), ("glm", "GLM", "ZAI"),
+                              ("codex", "Codex", "Codex"), ("minimax", "MiniMax", "MiniMax")] {
+        for (used, left) in [(0.0, 100), (14, 86), (100, 0)] {
+            let host = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 103.5, height: 46),
+                                styleMask: .borderless, backing: .buffered, defer: false)
+            host.isReleasedWhenClosed = false
+            let content = NSView(frame: NSRect(x: 0, y: 0, width: 103.5, height: 46))
+            host.contentView = content
+            let cell = NotchDetailCell(frame: .zero)
+            cell.translatesAutoresizingMaskIntoConstraints = false
+            content.addSubview(cell)
+            NSLayoutConstraint.activate([
+                cell.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+                cell.topAnchor.constraint(equalTo: content.topAnchor)
+            ])
+            cell.apply(Provider(
+                id: id, name: name, kind: "percent", ok: true,
+                pct: used, value: "5h \(Int(used))% /2.5h", detail: "7d 3% /6d · max 20x",
+                tone: nil, wins: [Win(label: "5h", pct: used, reset: "2.5h", tone: nil),
+                                  Win(label: "7d", pct: 3, reset: "6d", tone: nil)], cval: nil),
+                width: 103.5, balanceOnly: false)
+            content.layoutSubtreeIfNeeded()
+            let labels = cell.subviews.compactMap { $0 as? NSTextField }
+            let nameField = labels.first { $0.stringValue == alias }!
+            let valueField = labels.first { $0.stringValue == "5h \(left)% 2.5h" }!
+            checkMeter(valueField.font!.pointSize >= 7.5,
+                       "narrow notch values must remain legible rather than shrink below 7.5pt")
+            for field in [nameField, valueField] {
+                let textWidth = field.stringValue.size(withAttributes: [.font: field.font!]).width
+                checkMeter(field.alignmentRect(forFrame: field.frame).width + 0.5 >= textWidth,
+                           "hosted 103.5pt notch must fit the complete \(alias) name, remaining \(left)% and reset")
+            }
+            checkMeter(valueField.alignmentRect(forFrame: valueField.frame).minX
+                       >= nameField.alignmentRect(forFrame: nameField.frame).maxX + 4.5,
+                       "hosted notch name and remaining value must retain their logical gap")
+            host.close()
+        }
+    }
+}
+print("PASS: hosted narrow notch preserves full names, remaining percentages and reset times")
+
+do {
+    let row = RowView(frame: NSRect(x: 0, y: 0, width: 240, height: 50))
+    let notch = NotchDetailCell(frame: NSRect(x: 0, y: 0, width: 112, height: 46))
+    let compact = BarCell(frame: .zero)
+    let ring = RingCell(frame: .zero)
+    for (used, left) in [(0.0, 100), (25, 75), (100, 0)] {
+        let provider = meterProvider(
+            used, secondary: Win(label: "7d", pct: used, reset: "6d", tone: "orange"))
+        row.apply(provider, totalWidth: 240)
+        notch.apply(provider, width: 112, balanceOnly: false)
+        compact.apply(provider)
+        ring.apply(provider)
+        checkMeter(visibleMeterLabels(row).contains("5h \(left)% /2h")
+                   && visibleMeterLabels(row).contains("7d \(left)% /6d"),
+                   "list main and weekly labels should both report remaining quota")
+        checkMeter(visibleMeterLabels(notch).contains("5h \(left)% 2h")
+                   && visibleMeterLabels(notch).contains("7d \(left)% 6d"),
+                   "expanded notch main and weekly labels should both report remaining quota")
+        for view in [row, notch, compact, ring] as [NSView] {
+            let tip = view.toolTip ?? ""
+            checkMeter(tip.contains("\(left)%") && !tip.contains("Used:")
+                       && !tip.contains("5h \(Int(used))%")
+                       && !tip.contains("7d \(Int(used))%")
+                       && !tip.contains("余") && !tip.contains("left"),
+                       "native quota tooltips should contain remaining values without contradictory used percentages")
+        }
+        checkMeter(provider.pct == used && provider.wins?.first?.pct == used
+                   && provider.wins?.last?.pct == used
+                   && provider.value == "5h \(Int(used))% /2h",
+                   "UI formatting must preserve backend used values for pace and history")
+    }
+
+    let mcp = Provider(
+        id: "glm", name: "GLM", kind: "percent", ok: true,
+        pct: 14, value: "5h 14% /2.5h", detail: "MCP 60% · pro",
+        tone: nil, wins: [Win(label: "5h", pct: 14, reset: "2.5h", tone: nil),
+                          Win(label: "MCP", pct: 60, reset: nil, tone: nil)], cval: nil)
+    row.apply(mcp, totalWidth: 240)
+    notch.apply(mcp, width: 112, balanceOnly: false)
+    compact.apply(mcp)
+    ring.apply(mcp)
+    checkMeter(visibleMeterLabels(row).contains("5h 86% /2.5h")
+               && visibleMeterLabels(row).contains { $0.contains("MCP 40%") }
+               && visibleMeterLabels(notch).contains("5h 86% 2.5h")
+               && visibleMeterLabels(notch).contains("MCP 40%"),
+               "MCP and main percentages should consistently show remaining quota")
+    for view in [row, notch, compact, ring] as [NSView] {
+        let tip = view.toolTip ?? ""
+        checkMeter(tip.contains("86%") && tip.contains("40%")
+                   && !tip.contains("14%") && !tip.contains("60%"),
+                   "MCP native tooltips should not retain used percentages")
+    }
+
+    for (rawDetail, secondaryUsed, displayDetail) in [
+        ("pro · MCP/mo 278/1000", 28.0, "pro · MCP/mo 278/1000"),
+        ("pro · MCP/mo 60%", 60, "pro · MCP/mo 40%")
+    ] {
+        let glm = Provider(
+            id: "glm", name: "GLM", kind: "percent", ok: true,
+            pct: 14, value: "5h 14% /2.5h", detail: rawDetail,
+            tone: nil, wins: [Win(label: "5h", pct: 14, reset: "2.5h", tone: nil),
+                              Win(label: "MCP", pct: secondaryUsed, reset: nil, tone: nil)], cval: nil)
+        row.apply(glm, totalWidth: 240)
+        notch.apply(glm, width: 112, balanceOnly: false)
+        compact.apply(glm)
+        ring.apply(glm)
+        checkMeter(visibleMeterLabels(row).contains(displayDetail),
+                   "GLM detail must preserve MCP/mo counts and monthly labels, converting only percentage numbers")
+        checkMeter(visibleMeterLabels(notch).contains("pro"),
+                   "expanded GLM should retain its original leading plan metadata")
+        for view in [row, notch, compact, ring] as [NSView] {
+            checkMeter(view.toolTip?.contains(displayDetail) == true,
+                       "native GLM tooltips must retain exact MCP/mo counter or percentage format")
+        }
+    }
+
+    let credits = Provider(
+        id: "qoder", name: "Qoder", kind: "percent", ok: true,
+        pct: 25, value: "cr 25%", detail: "153/400 left · pro · exp 2d · promo 10%",
+        tone: nil, wins: [Win(label: "cr", pct: 25, reset: nil, tone: nil)], cval: nil)
+    row.apply(credits, totalWidth: 240)
+    notch.apply(credits, width: 112, balanceOnly: false)
+    compact.apply(credits)
+    ring.apply(credits)
+    checkMeter(visibleMeterLabels(row).contains("75%")
+               && visibleMeterLabels(notch).contains("75%")
+               && visibleMeterLabels(row).contains(credits.detail)
+               && visibleMeterLabels(notch).contains("153/400 left"),
+               "remaining credit counts, plan, expiry and unrelated percentages should be preserved")
+    for view in [row, notch, compact, ring] as [NSView] {
+        let tip = view.toolTip ?? ""
+        checkMeter(tip.contains("153/400 left") && tip.contains("pro")
+                   && tip.contains("exp 2d") && tip.contains("promo 10%")
+                   && tip.contains("75%") && !tip.contains("cr "),
+                   "formatting must not invert unrelated metadata percentages or remaining counts")
+    }
+
+    let errorWithPercent = Provider(
+        id: "glm", name: "GLM", kind: "percent", ok: false,
+        pct: 0, value: "—", detail: "error: quota check 75% unavailable", tone: nil,
+        wins: [Win(label: "5h", pct: 0, reset: nil, tone: nil)], cval: nil)
+    for provider in [unavailable, errorWithPercent, Provider(
+        id: "glm", name: "GLM", kind: "percent", ok: true,
+        pct: nil, value: "—", detail: "no quota data", tone: nil, wins: nil, cval: nil)] {
+        row.apply(provider, totalWidth: 240)
+        notch.apply(provider, width: 112, balanceOnly: false)
+        compact.apply(provider)
+        ring.apply(provider)
+        for view in [row, notch, compact, ring] as [NSView] {
+            let text = (visibleMeterLabels(view) + [view.toolTip ?? ""]).joined(separator: " ")
+            checkMeter(!text.contains("100%") && !text.contains("5h 0%")
+                       && text.contains(provider.detail),
+                       "failed or missing quota must retain its message without fabricating availability")
+        }
+    }
+    let balance = Provider(
+        id: "deepseek", name: "DeepSeek", kind: "balance", ok: true,
+        pct: nil, value: "¥32.50", detail: "today ¥1.25", tone: nil, wins: nil, cval: "-¥1.25")
+    row.apply(balance, totalWidth: 240)
+    notch.apply(balance, width: 112, balanceOnly: true)
+    checkMeter(visibleMeterLabels(row).contains("¥32.50")
+               && visibleMeterLabels(row).contains("today ¥1.25")
+               && visibleMeterLabels(notch).contains("¥32.50")
+               && visibleMeterLabels(notch).contains("¥1.25"),
+               "balance and daily spend must remain money values")
+}
+print("PASS: quota text and native tooltips consistently show remaining values without changing metadata")
 
 let initialWindowCount = NSApplication.shared.windows.count
 let subject = App()
