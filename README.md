@@ -72,7 +72,21 @@ The custom-endpoint row is a catch-all for any local gateway or dashboard that e
 
 ## Privacy & security
 
-- **No tokens in this repo or its output.** Credentials are read at runtime from your local credential stores; the JSON cache contains only percentages and balances.
+The JSON cache also supports read-only automation consumers. Schema version 2 adds `observedAt`
+(UTC epoch milliseconds), per-provider observation times and opaque `accountKey` fingerprints,
+unrounded `usedPercent` and absolute `resetAt` values on windows where available. Gemini's
+`quotaWindows` retain individual model/token buckets; `wins` keeps the existing display aggregate.
+`pct` remains **used** percentage. `ok` means the query succeeded, including when usage is 100%.
+Claude reports `quotaEnforced=false` when paid overage is enabled.
+
+The collector atomically replaces `~/.config/usage-monitor/usage.json` with mode 0600. Consumers
+should read this file rather than launch a second collector. An account fingerprint scopes a
+credential to its provider and endpoint; it contains no reusable token. Credential rotation can
+change it, so consumers must treat a changed fingerprint as an unverified binding. A quota query
+does not test inference, authentication on a different account, or network reachability on a
+different runtime path. Missing and failed providers must remain unknown.
+
+- **No tokens in this repo or its output.** Credentials are read at runtime from your local credential stores; the JSON cache contains quota observations and non-secret source fingerprints.
 - The only embedded constant is the **public installed-app OAuth client ID** of codex CLI (the same one shipped in every copy of that open-source CLI); gemini-cli's client constants are extracted at runtime from your local gemini installation. Both are needed because refresh tokens are bound to the client that issued them.
 - Everything talks directly to the official provider endpoints; nothing else is contacted.
 
