@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -116,5 +117,6 @@ class RoutingSnapshotTests(unittest.TestCase):
             path.write_text('{"old":true}')
             providers.write_usage_cache(path, '{"new":true}')
             self.assertEqual(json.loads(path.read_text()), {"new": True})
-            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            if os.name == "posix":
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(list(Path(directory).iterdir()), [path])

@@ -79,7 +79,8 @@ unrounded `usedPercent` and absolute `resetAt` values on windows where available
 `pct` remains **used** percentage. `ok` means the query succeeded, including when usage is 100%.
 Claude reports `quotaEnforced=false` when paid overage is enabled.
 
-The collector atomically replaces `~/.config/usage-monitor/usage.json` with mode 0600. Consumers
+The collector atomically replaces `~/.config/usage-monitor/usage.json` (mode 0600 on POSIX;
+Windows uses the containing user directory's ACL). Consumers
 should read this file rather than launch a second collector. An account fingerprint scopes a
 credential to its provider and endpoint; it contains no reusable token. Credential rotation can
 change it, so consumers must treat a changed fingerprint as an unverified binding. A quota query
