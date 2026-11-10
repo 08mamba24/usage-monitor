@@ -116,11 +116,13 @@ def claude_oauth():
 
 def http_json(url, headers=None, data=None, timeout=TIMEOUT):
     scope = getattr(_observation, "provider_id", None)
+    # The same bearer token can select different Codex workspaces.
     auth = {k.lower(): v for k, v in (headers or {}).items()
-            if any(part in k.lower() for part in ("authorization", "api-key", "token", "cookie"))}
+            if any(part in k.lower() for part in ("authorization", "api-key", "token", "cookie"))
+            or (scope == "codex" and k.lower() == "chatgpt-account-id")}
     if scope and auth:
-        origin = urllib.parse.urlsplit(url).netloc.lower()
-        remember_account(scope, origin + "\0" + json.dumps(auth, sort_keys=True))
+        # Custom endpoints may select an account through their path or query.
+        remember_account(scope, url + "\0" + json.dumps(auth, sort_keys=True))
     req = urllib.request.Request(url, headers=headers or {}, data=data,
                                  method="POST" if data is not None else "GET")
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -819,8 +821,10 @@ def p_custom():
         raise MissingCred("set CUSTOM_USAGE_URL in env")
     headers = ({"Authorization": f"Bearer {ENV['CUSTOM_USAGE_TOKEN']}"}
                if ENV.get("CUSTOM_USAGE_TOKEN") else None)
-    val = custom_field(http_json(url, headers),
-                       ENV.get("CUSTOM_USAGE_PATH") or "pct")
+    field = ENV.get("CUSTOM_USAGE_PATH") or "pct"
+    val = custom_field(http_json(url, headers), field)
+    if getattr(_observation, "account_key", None):
+        remember_account("custom", _observation.account_key + "\0" + field)
     name = ENV.get("CUSTOM_NAME") or "Custom"
     label = ENV.get("CUSTOM_LABEL") or "api"
     if isinstance(val, dict):

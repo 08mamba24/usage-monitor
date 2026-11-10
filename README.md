@@ -82,8 +82,11 @@ Claude reports `quotaEnforced=false` when paid overage is enabled.
 The collector atomically replaces `~/.config/usage-monitor/usage.json` (mode 0600 on POSIX;
 Windows uses the containing user directory's ACL). Consumers
 should read this file rather than launch a second collector. An account fingerprint scopes a
-credential to its provider and endpoint; it contains no reusable token. Credential rotation can
-change it, so consumers must treat a changed fingerprint as an unverified binding. A quota query
+credential to its provider and full endpoint, including path/query account selectors. Codex also
+includes the actual `ChatGPT-Account-Id` request header; Codex/Spark share the resulting identity.
+Custom queries include their selected JSON field path. It contains no reusable token. Credential
+rotation or changing an account selector can change it, so consumers must treat a changed
+fingerprint as an unverified binding. A quota query
 does not test inference, authentication on a different account, or network reachability on a
 different runtime path. Missing and failed providers must remain unknown.
 

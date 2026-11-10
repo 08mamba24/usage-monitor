@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import tempfile
@@ -99,6 +100,61 @@ class RoutingSnapshotTests(unittest.TestCase):
         with mock.patch.object(providers, "fetch_codex_usage", side_effect=fetch):
             codex, spark = providers.p_codex(), providers.p_spark()
         self.assertEqual(codex["accountKey"], spark["accountKey"])
+
+    def test_codex_workspace_selector_changes_identity_even_with_the_same_token(self):
+        token = 'x.' + base64.urlsafe_b64encode(json.dumps({'exp': 9999999999}).encode()).decode().rstrip('=') + '.x'
+        sent = []
+
+        class Response:
+            def __init__(self, workspace): self.workspace = workspace
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self):
+                window = {"primary_window": {"used_percent": 100 if self.workspace == "workspace-b" else 20}}
+                return json.dumps({"rate_limit": window,
+                                   "additional_rate_limits": [{"name": "spark", **window}]}).encode()
+
+        def urlopen(request, **kwargs):
+            selector = request.get_header('Chatgpt-account-id')
+            sent.append(selector)
+            return Response(selector)
+
+        samples = []
+        self.addCleanup(providers.clear_codex_usage_cache)
+        with mock.patch.object(providers.urllib.request, "urlopen", side_effect=urlopen):
+            for selector in ("workspace-a", "workspace-b"):
+                providers.clear_codex_usage_cache()
+                with mock.patch.object(providers, "_json_file", return_value={
+                        "tokens": {"access_token": token, "account_id": selector}}):
+                    codex, spark = providers.p_codex(), providers.p_spark()
+                self.assertTrue(codex["ok"] and spark["ok"])
+                self.assertEqual(codex["accountKey"], spark["accountKey"])
+                samples.append(codex)
+        self.assertEqual(sent, ["workspace-a", "workspace-b"])
+        self.assertEqual([sample["pct"] for sample in samples], [20, 100])
+        self.assertNotEqual(samples[0]["accountKey"], samples[1]["accountKey"])
+        for private in (token, "workspace-a", "workspace-b"):
+            self.assertNotIn(private, json.dumps(samples))
+
+    def test_custom_account_selector_in_endpoint_invalidates_the_source_binding(self):
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self): return b'{"used":20,"other_account":100}'
+
+        samples = []
+        with mock.patch.object(providers.urllib.request, "urlopen", return_value=Response()):
+            for endpoint, field in (("https://provider.invalid/a?workspace=one", "used"),
+                                    ("https://provider.invalid/a?workspace=two", "used"),
+                                    ("https://provider.invalid/b?workspace=two", "used"),
+                                    ("https://provider.invalid/b?workspace=two", "other_account")):
+                with mock.patch.dict(providers.ENV, {"CUSTOM_USAGE_URL": endpoint,
+                                                     "CUSTOM_USAGE_TOKEN": "same-token",
+                                                     "CUSTOM_USAGE_PATH": field}):
+                    samples.append(providers.p_custom())
+        self.assertTrue(all(sample["ok"] for sample in samples))
+        self.assertEqual([sample["pct"] for sample in samples], [20, 20, 20, 100])
+        self.assertEqual(len({sample["accountKey"] for sample in samples}), 4)
 
     def test_repeated_collection_fetches_a_new_sample_instead_of_redating_cached_usage(self):
         self.addCleanup(providers.clear_codex_usage_cache)
