@@ -12,12 +12,14 @@
 import base64
 import concurrent.futures as cf
 import datetime
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import urllib.parse
 import urllib.request
@@ -26,6 +28,17 @@ CONF = os.path.expanduser("~/.config/usage-monitor/env")
 STATE = os.path.expanduser("~/.config/usage-monitor/state.json")
 TIMEOUT = 8
 WEEK = 7 * 24 * 3600 * 1000
+_observation = threading.local()
+
+
+def now_ms():
+    return int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
+
+
+def remember_account(scope, material):
+    """Opaque credential identity; rotation invalidates a consumer's explicit binding."""
+    _observation.account_key = hashlib.sha256(
+        (scope + "\0" + material).encode()).hexdigest()
 
 
 # ── 凭据层 ───────────────────────────────────────────────────────────────────
@@ -102,6 +115,14 @@ def claude_oauth():
 # ── 传输层 ───────────────────────────────────────────────────────────────────
 
 def http_json(url, headers=None, data=None, timeout=TIMEOUT):
+    scope = getattr(_observation, "provider_id", None)
+    # The same bearer token can select different Codex workspaces.
+    auth = {k.lower(): v for k, v in (headers or {}).items()
+            if any(part in k.lower() for part in ("authorization", "api-key", "token", "cookie"))
+            or (scope == "codex" and k.lower() == "chatgpt-account-id")}
+    if scope and auth:
+        # Custom endpoints may select an account through their path or query.
+        remember_account(scope, url + "\0" + json.dumps(auth, sort_keys=True))
     req = urllib.request.Request(url, headers=headers or {}, data=data,
                                  method="POST" if data is not None else "GET")
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -123,12 +144,20 @@ def provider(pid, name):
     """注册 provider；统一处理缺凭据与异常，函数只需返回 row 或抛异常"""
     def deco(fn):
         def wrapper():
+            _observation.provider_id = "codex" if pid == "spark" else pid
+            _observation.account_key = None
             try:
-                return fn()
+                result = fn()
             except MissingCred as e:
-                return row(pid, name, kind="missing", detail=str(e))
+                result = row(pid, name, kind="missing", detail=str(e))
             except Exception as e:
-                return row(pid, name, detail=f"err: {type(e).__name__}")
+                result = row(pid, name, detail=f"err: {type(e).__name__}")
+            result["observedAt"] = now_ms()
+            if result["ok"] and _observation.account_key:
+                result["accountKey"] = _observation.account_key
+            _observation.provider_id = None
+            _observation.account_key = None
+            return result
         wrapper.pid = pid
         PROVIDERS.append(wrapper)
         return wrapper
@@ -141,7 +170,8 @@ def win(label, pct, reset=None, text=None, left_ms=None, window_ms=None):
     给出 left_ms+window_ms 时附带 pace 速度评级"""
     if pct is None:
         return None
-    return {"label": label, "pct": round(pct), "reset": reset, "text": text,
+    return {"label": label, "pct": round(pct), "usedPercent": pct, "reset": reset, "text": text,
+            **({"resetAt": now_ms() + int(left_ms)} if left_ms is not None else {}),
             "tone": pace(pct, left_ms, window_ms) if left_ms and window_ms else None}
 
 
@@ -271,11 +301,14 @@ def p_claude():
         used, lim = float(eu.get("used_credits") or 0) / scale, float(eu["monthly_limit"]) / scale
         cur = "$" if eu.get("currency") == "USD" else (eu.get("currency") or "")
         extra = f"{cur}{used:.2f}/{cur}{lim:.0f}"
-    return pct_row("claude", "Claude", fh["utilization"],
+    result = pct_row("claude", "Claude", fh["utilization"],
                    ms_left_iso(fh["resets_at"]) if fh.get("resets_at") else None,
                    win("7d", sd.get("utilization"), fmt_ms(sleft) if sleft else None,
                        left_ms=sleft, window_ms=WEEK),
                    sub, extra, cval=extra)
+    # An exhausted subscription window is advisory when paid overage is enabled.
+    result["quotaEnforced"] = not eu.get("is_enabled", False)
+    return result
 
 
 @provider("glm", "GLM")
@@ -325,13 +358,15 @@ def p_minimax():
 _CODEX_CLIENT = "app_EMoamEEZ73f0CkXaXp7hrann"
 _codex_usage_lock = threading.Lock()
 _codex_usage_cache = None  # ("ok", dict) | ("err", Exception)
+_codex_usage_account_key = None
 
 
 def clear_codex_usage_cache():
     """Drop the per-process Codex/Spark usage cache (tests + a fresh refresh)."""
-    global _codex_usage_cache
+    global _codex_usage_cache, _codex_usage_account_key
     with _codex_usage_lock:
         _codex_usage_cache = None
+        _codex_usage_account_key = None
 
 
 def fetch_codex_usage():
@@ -365,15 +400,17 @@ def fetch_codex_usage():
 
 def codex_usage():
     """One wham/usage payload per process so Codex and Spark share the request."""
-    global _codex_usage_cache
+    global _codex_usage_cache, _codex_usage_account_key
     with _codex_usage_lock:
         if _codex_usage_cache is not None:
             kind, val = _codex_usage_cache
             if kind == "err":
                 raise val
+            _observation.account_key = _codex_usage_account_key
             return val
         try:
             val = fetch_codex_usage()
+            _codex_usage_account_key = getattr(_observation, "account_key", None)
             _codex_usage_cache = ("ok", val)
             return val
         except Exception as e:
@@ -419,12 +456,16 @@ def spark_rate_limit(d):
 @provider("codex", "Codex")
 def p_codex():
     d = codex_usage()
-    return rate_limit_row("codex", "Codex", d.get("rate_limit") or {}, d.get("plan_type"))
+    result = rate_limit_row("codex", "Codex", d.get("rate_limit") or {}, d.get("plan_type"))
+    credits = d.get("credits") or {}
+    result["quotaEnforced"] = not (credits.get("has_credits") or credits.get("unlimited"))
+    return result
 
 
 @provider("spark", "Spark")
 def p_spark():
-    rl = spark_rate_limit(codex_usage())
+    data = codex_usage()
+    rl = spark_rate_limit(data)
     if not rl:
         raise MissingCred("no spark quota")
     pw, sw = rl.get("primary_window") or {}, rl.get("secondary_window") or {}
@@ -432,7 +473,10 @@ def p_spark():
         if sw.get("used_percent") is None:
             raise MissingCred("no spark quota")
         rl = {"primary_window": sw, "secondary_window": {}}
-    return rate_limit_row("spark", "Spark", rl)
+    result = rate_limit_row("spark", "Spark", rl)
+    credits = data.get("credits") or {}
+    result["quotaEnforced"] = not (credits.get("has_credits") or credits.get("unlimited"))
+    return result
 
 
 # ── qoder CLI (qodercn) ──────────────────────────────────────────────────────
@@ -777,8 +821,10 @@ def p_custom():
         raise MissingCred("set CUSTOM_USAGE_URL in env")
     headers = ({"Authorization": f"Bearer {ENV['CUSTOM_USAGE_TOKEN']}"}
                if ENV.get("CUSTOM_USAGE_TOKEN") else None)
-    val = custom_field(http_json(url, headers),
-                       ENV.get("CUSTOM_USAGE_PATH") or "pct")
+    field = ENV.get("CUSTOM_USAGE_PATH") or "pct"
+    val = custom_field(http_json(url, headers), field)
+    if getattr(_observation, "account_key", None):
+        remember_account("custom", _observation.account_key + "\0" + field)
     name = ENV.get("CUSTOM_NAME") or "Custom"
     label = ENV.get("CUSTOM_LABEL") or "api"
     if isinstance(val, dict):
@@ -866,7 +912,26 @@ def p_gemini():
     if not buckets:
         return row("gemini", "Gemini", detail="no data (token expired?)")
     frac = min((b.get("remainingFraction", 1) for b in buckets), default=1)
-    return pct_row("gemini", "Gemini", (1 - frac) * 100, None, "Code Assist")
+    result = pct_row("gemini", "Gemini", (1 - frac) * 100, None, "Code Assist")
+    # The display keeps its aggregate. Routing retains independent model/token buckets.
+    result["quotaWindows"] = []
+    for bucket in buckets:
+        model = bucket.get("modelId")
+        remaining = bucket.get("remainingFraction")
+        if not model or remaining is None:
+            continue
+        label = str(model) + ("/" + str(bucket["tokenType"]) if bucket.get("tokenType") else "")
+        window = {"label": label, "pct": round((1 - remaining) * 100),
+                  "usedPercent": (1 - remaining) * 100}
+        reset = bucket.get("resetTime")
+        if reset:
+            try:
+                window["resetAt"] = int(datetime.datetime.fromisoformat(
+                    reset.replace("Z", "+00:00")).timestamp() * 1000)
+            except (ValueError, TypeError):
+                pass
+        result["quotaWindows"].append(window)
+    return result
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
@@ -877,13 +942,30 @@ _ORDER = ["claude", "codex", "spark", "grok", "glm", "minimax", "qoder", "codebu
 
 def collect():
     """聚合所有 provider → payload dict (Swift 面板走 stdout, Windows 悬浮窗直接调用)。"""
+    # Codex/Spark share one request per batch; a persistent consumer must not re-date an old sample.
+    clear_codex_usage_cache()
     with cf.ThreadPoolExecutor(len(PROVIDERS)) as ex:
         out = list(ex.map(lambda p: p(), PROVIDERS))
     # 本机没配凭据的订阅直接隐藏 (面板自适应); 真实错误仍显示
     out = [r for r in out if r["kind"] != "missing"]
     out.sort(key=lambda r: _ORDER.index(r["id"]) if r["id"] in _ORDER else 99)
-    return {"updated": datetime.datetime.now().strftime("%H:%M"),
+    return {"schemaVersion": 2, "observedAt": now_ms(),
+            "updated": datetime.datetime.now().strftime("%H:%M"),
             "providers": out}
+
+
+def write_usage_cache(path, payload):
+    """Readers see one complete sample; no partially rewritten JSON or credential output."""
+    directory = os.path.dirname(os.fspath(path))
+    os.makedirs(directory, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".usage-", dir=directory)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            stream.write(payload)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def main():
@@ -891,7 +973,7 @@ def main():
     print(payload)
     # 同步写缓存，供 bridge /usage 端点（手表）读取
     try:
-        open(os.path.join(os.path.dirname(STATE), "usage.json"), "w").write(payload)
+        write_usage_cache(os.path.join(os.path.dirname(STATE), "usage.json"), payload)
     except OSError:
         pass
 
