@@ -2,6 +2,7 @@
 // 编译: swiftc -O -o usage-monitor UsageMonitor.swift
 // 数据: 定时运行 providers.py，解析其 stdout JSON
 import AppKit
+import CoreText
 
 // ── 数据模型 ──────────────────────────────────────────────────────────────────
 struct Win: Decodable {
@@ -361,9 +362,15 @@ final class MiniRingView: NSView {
             .font: NSFont.systemFont(ofSize: Metrics.labelSize, weight: .semibold),
             .foregroundColor: NSColor.secondaryLabelColor
         ]
-        let s = label as NSString
-        let size = s.size(withAttributes: attrs)
-        s.draw(at: NSPoint(x: c.x - size.width / 2, y: c.y - size.height / 2), withAttributes: attrs)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: label, attributes: attrs))
+        // 字体行框包含边距和行高；按可见字形居中，让 O 与内外圆环共心。
+        let ink = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        context.saveGState()
+        context.textMatrix = .identity
+        context.textPosition = CGPoint(x: c.x - ink.midX, y: c.y - ink.midY)
+        CTLineDraw(line, context)
+        context.restoreGState()
     }
 }
 
