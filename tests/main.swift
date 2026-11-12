@@ -244,6 +244,40 @@ do {
 }
 print("PASS: ring consumption grows clockwise from noon")
 
+// The O reads as a third ring: center its visible ink, not the font's line box.
+do {
+    let side = MiniRingView.Metrics.size
+    let scale: CGFloat = 4
+    let ring = MiniRingView(frame: NSRect(x: 0, y: 0, width: side, height: side))
+    ring.label = "O"
+    let bitmap = NSBitmapImageRep(
+        bitmapDataPlanes: nil, pixelsWide: Int(side * scale), pixelsHigh: Int(side * scale),
+        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    NSGraphicsContext.saveGraphicsState()
+    let context = NSGraphicsContext(bitmapImageRep: bitmap)!
+    NSGraphicsContext.current = context
+    context.cgContext.scaleBy(x: scale, y: scale)
+    ring.draw(ring.bounds)
+    NSGraphicsContext.restoreGraphicsState()
+
+    var minX = bitmap.pixelsWide, minY = bitmap.pixelsHigh, maxX = -1, maxY = -1
+    for y in 0..<bitmap.pixelsHigh {
+        for x in 0..<bitmap.pixelsWide where bitmap.colorAt(x: x, y: y)!.alphaComponent > 0.1 {
+            minX = min(minX, x); maxX = max(maxX, x)
+            minY = min(minY, y); maxY = max(maxY, y)
+        }
+    }
+    let inkX = CGFloat(minX + maxX + 1) / (2 * scale)
+    let inkY = CGFloat(minY + maxY + 1) / (2 * scale)
+    guard maxX >= minX, maxY >= minY,
+          abs(inkX - side / 2) <= 0.25, abs(inkY - side / 2) <= 0.25 else {
+        fputs("FAIL: visible O must share the ring center (\(side / 2), \(side / 2)); got (\(inkX), \(inkY))\n", stderr)
+        exit(1)
+    }
+}
+print("PASS: visible O is concentric with the quota rings")
+
 func checkMeter(_ condition: @autoclosure () -> Bool, _ message: String) {
     guard condition() else {
         fputs("FAIL: \(message)\n", stderr)
